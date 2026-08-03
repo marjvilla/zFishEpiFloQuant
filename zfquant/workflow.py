@@ -143,7 +143,6 @@ class Controller(object):
         self._armed_plane = None       # the REAL source plane, for provenance
         self._resolution = None
         self._threshold = None
-        self._bg_stats = None          # for _warn_if_threshold_implausible
         self._committing = False
         # Stack of (label, undo_callable) for the CURRENT fish only: accepted
         # eye/background/signal captures and skips, most recent last. Cleared
@@ -369,7 +368,6 @@ class Controller(object):
             return
 
         self._threshold = threshold
-        self._bg_stats = stats   # for the plausibility check in _accept_signal
         name = self._channel
 
         roi_names, _ = self._export_background_only(name)
@@ -424,23 +422,6 @@ class Controller(object):
         return core.ThresholdResult(low, high, core.THRESH_MANUAL,
                                     overridden=True)
 
-    def _warn_if_threshold_implausible(self, threshold):
-        """A live-read threshold could still be wrong if something outside
-        our control (or a bug we haven't found yet) resets the window --
-        this is the safety net for that, not a routine check. Never blocks:
-        matches the plausibility-check convention elsewhere in this codebase
-        (warn, never refuse) since a legitimately very permissive choice is
-        the operator's call, not this tool's to override."""
-        if self._bg_stats is None:
-            return
-        bg_mean = self._bg_stats.get("Mean")
-        if bg_mean is None or threshold.low >= bg_mean:
-            return
-        self.warn("Threshold low (%.1f) is below the measured background "
-                  "mean (%.1f) -- this may not be excluding background at "
-                  "all. Check the sliders if that's not what you intended."
-                  % (threshold.low, bg_mean))
-
     def _accept_signal(self, working, box_roi):
         threshold = self._current_threshold_for_signal(working)
         if threshold is None:
@@ -448,7 +429,6 @@ class Controller(object):
                       "channel, or adjust the Threshold window, then try "
                       "again.")
             return
-        self._warn_if_threshold_implausible(threshold)
 
         selection = fiji_io.box_select(working, box_roi, threshold,
                                        min_area=self.s.min_area)
