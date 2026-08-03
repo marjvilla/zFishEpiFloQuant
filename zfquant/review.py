@@ -39,7 +39,7 @@ import traceback
 from java.awt import BorderLayout, Color, Dimension, Font, GridLayout
 from java.awt.event import WindowAdapter
 from javax.swing import (BorderFactory, BoxLayout, JButton, JFrame, JLabel,
-                         JOptionPane, JPanel, SwingUtilities)
+                         JOptionPane, JPanel, JScrollPane, SwingUtilities)
 from javax.swing.border import EmptyBorder
 
 from zfquant import fiji_io
@@ -148,10 +148,10 @@ class ReviewSession(object):
         self.slice_order = []
 
         # Positions explicitly marked "no fish here" -- tracked separately
-        # from "just has zero entries right now" so a later Back + "Accept &
-        # Apply to Rest" sweeping forward over an already-skipped position
-        # can't silently resurrect a fish there; only add_fish_at_current()
-        # (an explicit change of mind) clears an entry from this set.
+        # from "just has zero entries right now" so ensure_all_default_entries
+        # (every position is pre-filled up front) can't silently resurrect a
+        # fish there; only add_fish_at() (an explicit change of mind) clears
+        # an entry from this set.
         self._skipped_positions = set()
 
         if mode == manifest_mod.LAYOUT_PER_WINDOW:
@@ -175,8 +175,7 @@ class ReviewSession(object):
                 else:
                     self.total_positions = target.getNFrames()
                 self.current_position_index = 1 if self.total_positions >= 1 else 0
-                if self.current_position_index:
-                    self._ensure_default_entries(self.current_position_index)
+                self.ensure_all_default_entries()
             else:
                 # LAYOUT_FLAT_STACK: total_positions/current_position_index
                 # are set later, by confirm_stack_setup(), once the operator
@@ -210,6 +209,36 @@ class ReviewSession(object):
         if self.bf_name in planes:
             return planes[self.bf_name]
         return planes[self.channel_names[0]]
+
+    # -- channel <-> C-index correction (LAYOUT_HYPERSTACK only) -------------
+    #
+    # startup.py's setup dialog assigns each channel a C-index purely from
+    # the order it was typed in -- a reasonable first guess, but with no way
+    # to fix it if the real hyperstack's channel order doesn't match. This
+    # lets the operator scroll the real hyperstack's C slider to the actual
+    # channel and click to correct it, same idea as Flat Stack's click-based
+    # slice order, but as an always-available correction rather than a
+    # one-time blocking step (channels are usually already right).
+
+    def current_c_index(self):
+        if self.mode != manifest_mod.LAYOUT_HYPERSTACK or self._target_imp is None:
+            return None
+        return self._target_imp.getC()
+
+    def set_channel_index(self, name, index):
+        """Correct which C-slice `name` actually is, and propagate the fix
+        to every already-generated fish's plane for that channel (skipping
+        fish where the operator deliberately omitted it), so a wrong guess
+        at setup doesn't require restarting review from scratch."""
+        if self.mode != manifest_mod.LAYOUT_HYPERSTACK or index is None:
+            return
+        self.config.channel_indices[name] = index
+        for entry in self._fish_entries:
+            if entry.position is None or entry.channels.get(name) == SKIPPED:
+                continue
+            planes = self._planes_for_position(entry.position)
+            if name in planes:
+                entry.set_channel(name, planes[name])
 
     # -- interactive stack setup (LAYOUT_FLAT_STACK only) --------------------
     #
@@ -265,8 +294,7 @@ class ReviewSession(object):
             0, (total_slices - self.config.first_slice + 1) // stride)
         self.stack_setup_done = True
         self.current_position_index = 1 if self.total_positions >= 1 else 0
-        if self.current_position_index:
-            self._ensure_default_entries(self.current_position_index)
+        self.ensure_all_default_entries()
         self._refresh_label()
         return True
 
@@ -304,14 +332,24 @@ class ReviewSession(object):
             entry.set_channel(name, plane)
         self._fish_entries.insert(self._insertion_index_for(position), entry)
 
-    def add_fish_at_current(self):
-        """Auto modes: add another fish co-located at the current position
+    def ensure_all_default_entries(self):
+        """Pre-fill every position with its default (1 fish, every
+        configured channel) up front, so the whole plan is visible and
+        editable on one screen instead of requiring a click through each
+        position just to see it (see _render_auto in review.py)."""
+        for position in range(1, self.total_positions + 1):
+            self._ensure_default_entries(position)
+
+    def entries_at_position(self, position):
+        return [e for e in self._fish_entries if e.position == position]
+
+    def add_fish_at(self, position):
+        """Auto modes: add another fish co-located at `position`
         (multi-fish-per-image). No-op for Manual -- use assign_channel with
         NEW_FISH instead. An explicit add is a change of mind about a
         position previously marked skipped, so it un-skips it."""
         if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
             return None
-        position = self.current_position_index
         self._skipped_positions.discard(position)
         planes = self._planes_for_position(position)
         entry = ReviewFishEntry(self._next_uid(), position=position)
@@ -323,18 +361,26 @@ class ReviewSession(object):
     def remove_fish(self, uid):
         self._fish_entries = [e for e in self._fish_entries if e.uid != uid]
 
-    def skip_current_position(self):
-        """Auto modes: this position has no fish at all -- a blank frame, a
-        failed acquisition, a gap. Clears every entry at the current position
-        in one click, rather than removing them one at a time, and remembers
-        that this position was deliberately left empty so a later bulk
-        "Accept & Apply to Rest" can't silently resurrect a fish here."""
+    def skip_position(self, position):
+        """Auto modes: `position` has no fish at all -- a blank frame, a
+        failed acquisition, a gap. Clears every entry there in one click,
+        rather than removing them one at a time, and remembers that it was
+        deliberately left empty so ensure_all_default_entries() (or a later
+        change elsewhere) can't silently resurrect a fish here."""
         if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
             return
-        position = self.current_position_index
         self._fish_entries = [e for e in self._fish_entries
                               if e.position != position]
         self._skipped_positions.add(position)
+
+    def view_position(self, position):
+        """Jump the real stack/image to `position` and label it, for a
+        quick visual double check -- without requiring a sequential walk
+        through every position first."""
+        if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
+            return
+        self.current_position_index = position
+        self._refresh_label()
 
     def move_fish(self, uid, delta):
         """delta=+1/-1. Auto modes only allow swapping within the SAME
@@ -426,44 +472,26 @@ class ReviewSession(object):
             return self._images[self.current_position_index]
         return None
 
-    # -- navigation -----------------------------------------------------------
+    # -- navigation (Manual only -- Auto modes show every position on one
+    # screen at once, see ensure_all_default_entries/view_position above) ----
 
     def go_next(self):
-        if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
-            if self.current_position_index >= len(self._images) - 1:
-                return False
-            self.current_position_index += 1
-        else:
-            if self.current_position_index >= self.total_positions:
-                return False
-            self.current_position_index += 1
-            self._ensure_default_entries(self.current_position_index)
+        if self.mode != manifest_mod.LAYOUT_PER_WINDOW:
+            return False
+        if self.current_position_index >= len(self._images) - 1:
+            return False
+        self.current_position_index += 1
         self._refresh_label()
         return True
 
     def go_back(self):
-        lower_bound = 0 if self.mode == manifest_mod.LAYOUT_PER_WINDOW else 1
-        if self.current_position_index <= lower_bound:
+        if self.mode != manifest_mod.LAYOUT_PER_WINDOW:
+            return False
+        if self.current_position_index <= 0:
             return False
         self.current_position_index -= 1
         self._refresh_label()
         return True
-
-    def apply_template_range(self):
-        """Auto modes' fast path: fill every remaining position with the
-        default (1 fish, all channels) template and land on the last one,
-        still visually confirmed -- calls the exact same
-        _ensure_default_entries() single-step Next uses, just in a loop, so
-        the fast path can never drift from single-step behaviour. Back
-        always works afterward to single-step-correct any touched position."""
-        if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
-            return
-        start = self.current_position_index + 1
-        for position in range(start, self.total_positions + 1):
-            self._ensure_default_entries(position)
-        if self.total_positions >= 1:
-            self.current_position_index = self.total_positions
-        self._refresh_label()
 
     # -- completion -----------------------------------------------------------
 
@@ -544,9 +572,10 @@ class ReviewPanel(object):
         self.position_label = None
         self.content_panel = None
         self.done_button = None
-        self.apply_button = None
         self.back_button = None
         self.next_button = None
+        self.cancel_button = None
+        self.nav_panel = None
         self._pending_channel = None   # Manual mode: channel picked, waiting
                                        # for a fish click to complete the
                                        # assignment -- see _manual_channel_row
@@ -571,46 +600,40 @@ class ReviewPanel(object):
         self.content_panel = JPanel()
         self.content_panel.setLayout(BoxLayout(self.content_panel,
                                                BoxLayout.Y_AXIS))
-        root.add(self.content_panel)
+        scroll = JScrollPane(self.content_panel)
+        scroll.setBorder(BorderFactory.createEmptyBorder())
+        scroll.setPreferredSize(Dimension(PANEL_WIDTH, 420))
+        scroll.getVerticalScrollBar().setUnitIncrement(16)
+        root.add(scroll)
         root.add(self._spacer())
 
         hint = JLabel(
-            "<html><body style='width:%dpx'>Back / Next move between "
-            "positions in the stack (or open windows, in Manual). Move "
-            "Up/Down only matter when more than one fish shares a "
-            "position.</body></html>" % (PANEL_WIDTH - 20))
+            "<html><body style='width:%dpx'>Auto modes show every position "
+            "at once below -- fix only what needs it. Back / Next step "
+            "between open windows in Manual mode. Move Up/Down only matter "
+            "when more than one fish shares a position.</body></html>"
+            % (PANEL_WIDTH - 20))
         hint.setFont(Font("SansSerif", Font.PLAIN, 10))
         hint.setForeground(Color(0x80, 0x80, 0x80))
         root.add(hint)
         root.add(self._spacer())
 
-        nav = JPanel(GridLayout(0, 2, 4, 4))
-
         self.back_button = self._button("< Back", self._on_back)
         self.back_button.setToolTipText(
-            "Go to the previous position (or window, in Manual mode) to "
-            "review or change it. Nothing already reviewed is lost.")
-        nav.add(self.back_button)
+            "Go to the previous window (Manual mode) to review or change "
+            "it. Nothing already reviewed is lost.")
 
         self.next_button = self._button("Next >", self._on_next)
         self.next_button.setToolTipText(
-            "Accept what's shown for this position as-is and move to the "
+            "Accept what's shown for this window as-is and move to the "
             "next one.")
-        nav.add(self.next_button)
 
-        self.apply_button = self._button("Accept & Apply to Rest",
-                                         self._on_apply_range)
-        self.apply_button.setToolTipText(
-            "Fast-forward: apply the default (1 fish, every channel) to "
-            "every remaining position without reviewing each one. Lands on "
-            "the last position so you can spot-check it, and Back still "
-            "works to fix anything individually.")
-        nav.add(self.apply_button)
+        self.cancel_button = self._button("Cancel", self._on_cancel)
+        self.cancel_button.setToolTipText(
+            "Abandon setup. Nothing has been measured yet.")
 
-        cancel = self._button("Cancel", self._on_cancel)
-        cancel.setToolTipText("Abandon setup. Nothing has been measured yet.")
-        nav.add(cancel)
-        root.add(nav)
+        self.nav_panel = JPanel(GridLayout(0, 2, 4, 4))
+        root.add(self.nav_panel)
 
         root.add(self._spacer())
         self.done_button = self._button("Done", self._on_done)
@@ -655,10 +678,6 @@ class ReviewPanel(object):
     def _on_next(self):
         self._pending_channel = None
         self.session.go_next()
-        self.refresh()
-
-    def _on_apply_range(self):
-        self.session.apply_template_range()
         self.refresh()
 
     def _on_done(self):
@@ -715,30 +734,40 @@ class ReviewPanel(object):
     def refresh(self):
         self._later(self._refresh_now)
 
+    def _set_nav(self, show_back_next):
+        """Rebuild the nav row for the current mode: Manual steps window by
+        window (Back/Next matter); Auto shows every position on one screen
+        (see _render_auto), so there's nothing to step through."""
+        self.nav_panel.removeAll()
+        if show_back_next:
+            self.nav_panel.add(self.back_button)
+            self.nav_panel.add(self.next_button)
+        self.nav_panel.add(self.cancel_button)
+        self.nav_panel.revalidate()
+        self.nav_panel.repaint()
+
     def _refresh_now(self):
         session = self.session
         if (session.mode == manifest_mod.LAYOUT_FLAT_STACK
                 and not session.stack_setup_done):
             self._render_stack_setup()
             return
-        self.back_button.setEnabled(True)
-        self.next_button.setEnabled(True)
         if session.mode == manifest_mod.LAYOUT_PER_WINDOW:
+            self._set_nav(True)
             self._render_manual()
         else:
+            self._set_nav(False)
             self._render_auto()
         self.done_button.setEnabled(session.is_complete())
 
     def _render_stack_setup(self):
         """Auto Single Stack only: confirm the channel order and first slice
         by looking at the real stack and clicking, instead of typing either
-        one blind. Back/Next/Apply/Done are all disabled here -- there is no
-        position sequence to walk yet."""
+        one blind. There is no position sequence to walk yet, so nav is just
+        Cancel; Done stays disabled."""
         session = self.session
         self.position_label.setText("Auto Single Stack -- set up the stack")
-        self.apply_button.setVisible(False)
-        self.back_button.setEnabled(False)
-        self.next_button.setEnabled(False)
+        self._set_nav(False)
         self.done_button.setEnabled(False)
 
         self.content_panel.removeAll()
@@ -796,32 +825,85 @@ class ReviewPanel(object):
         mode_name = ("Auto Hyperstack" if session.mode
                     == manifest_mod.LAYOUT_HYPERSTACK else "Auto Single Stack")
         self.position_label.setText(
-            "%s -- position %d of %d" % (mode_name,
-                                         session.current_position_index,
-                                         session.total_positions))
-        self.apply_button.setVisible(True)
-        self.apply_button.setEnabled(True)
+            "%s -- %d position(s), all shown below" % (
+                mode_name, session.total_positions))
 
         self.content_panel.removeAll()
-        self.content_panel.add(self._heading("Fish at this position"))
-        for entry in session.entries_at_current_position():
-            self.content_panel.add(self._fish_row(entry))
-
-        actions = JPanel(GridLayout(0, 1, 2, 2))
-        actions.add(self._button("+ Add another fish at this position",
-                                 self._make_add_callback()))
-        skip = self._button("Skip this position (no fish here)",
-                            self._on_skip_position)
-        skip.setToolTipText("Blank frame, failed acquisition, a gap in the "
-                            "stack -- clears every fish at this position in "
-                            "one click.")
-        actions.add(skip)
-        self.content_panel.add(actions)
+        if session.mode == manifest_mod.LAYOUT_HYPERSTACK:
+            self.content_panel.add(self._channel_index_panel())
+            self.content_panel.add(self._spacer())
+        for position in range(1, session.total_positions + 1):
+            self.content_panel.add(self._position_block(position))
 
         self.content_panel.revalidate()
         self.content_panel.repaint()
         if self.frame is not None:
             self.frame.pack()
+
+    def _channel_index_panel(self):
+        """Hyperstack only: the channel -> C-index mapping guessed at setup,
+        correctable here by scrolling the real hyperstack's C slider to the
+        actual channel and clicking "Use current C" -- fixes every fish
+        already generated for that channel, not just future ones."""
+        session = self.session
+        panel = JPanel()
+        panel.setLayout(BoxLayout(panel, BoxLayout.Y_AXIS))
+        panel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, Color(0xd8, 0xd8, 0xd8)),
+            BorderFactory.createEmptyBorder(0, 0, 8, 0)))
+        panel.add(self._heading(
+            "Channel order (scroll the stack's C slider to the real "
+            "channel, then click to fix it):"))
+        for name in session.channel_names:
+            row = JPanel(BorderLayout(6, 0))
+            index = session.config.channel_indices.get(name)
+            row.add(self._label("%s: C%s" % (name, index), size=11),
+                   BorderLayout.CENTER)
+            button = self._button("Use current C",
+                                  self._make_set_channel_index_callback(name))
+            button.setToolTipText(
+                "Set %s to whatever C the real hyperstack is scrolled to "
+                "right now, and fix every fish already using the old value."
+                % name)
+            row.add(button, BorderLayout.EAST)
+            panel.add(row)
+        return panel
+
+    def _position_block(self, position):
+        """One position's worth of the all-at-once Auto review: a heading
+        with a quick way to look at the real image, its fish (pre-filled
+        with the default already -- see ensure_all_default_entries), and the
+        add/skip actions scoped to just this position."""
+        session = self.session
+        block = JPanel()
+        block.setLayout(BoxLayout(block, BoxLayout.Y_AXIS))
+        block.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, Color(0xd8, 0xd8, 0xd8)),
+            BorderFactory.createEmptyBorder(4, 0, 8, 0)))
+
+        skipped = position in session._skipped_positions
+        header = JPanel(BorderLayout(6, 0))
+        title = "Position %d%s" % (position, "  (skipped)" if skipped else "")
+        header.add(self._label(title, bold=True, size=11), BorderLayout.CENTER)
+        view = self._button("View", self._make_view_callback(position))
+        view.setToolTipText("Jump the real stack to this position and label "
+                            "it, to double-check it visually.")
+        header.add(view, BorderLayout.EAST)
+        block.add(header)
+
+        for entry in session.entries_at_position(position):
+            block.add(self._fish_row(entry))
+
+        actions = JPanel(GridLayout(1, 0, 2, 2))
+        actions.add(self._button("+ Add fish", self._make_add_callback(position)))
+        skip = self._button("Skip (no fish here)",
+                            self._make_skip_callback(position))
+        skip.setToolTipText("Blank frame, failed acquisition, a gap in the "
+                            "stack -- clears every fish at this position in "
+                            "one click.")
+        actions.add(skip)
+        block.add(actions)
+        return block
 
     def _render_manual(self):
         session = self.session
@@ -831,7 +913,6 @@ class ReviewPanel(object):
             "Manual -- window %d of %d: %s"
             % (session.current_position_index + 1, len(session._images),
               title))
-        self.apply_button.setVisible(False)
 
         self.content_panel.removeAll()
         self.content_panel.add(self._heading(
@@ -957,15 +1038,28 @@ class ReviewPanel(object):
             self.refresh()
         return callback
 
-    def _make_add_callback(self):
+    def _make_add_callback(self, position):
         def callback():
-            self.session.add_fish_at_current()
+            self.session.add_fish_at(position)
             self.refresh()
         return callback
 
-    def _on_skip_position(self):
-        self.session.skip_current_position()
-        self.refresh()
+    def _make_skip_callback(self, position):
+        def callback():
+            self.session.skip_position(position)
+            self.refresh()
+        return callback
+
+    def _make_view_callback(self, position):
+        def callback():
+            self.session.view_position(position)
+        return callback
+
+    def _make_set_channel_index_callback(self, name):
+        def callback():
+            self.session.set_channel_index(name, self.session.current_c_index())
+            self.refresh()
+        return callback
 
     def _make_remove_callback(self, uid):
         def callback():
