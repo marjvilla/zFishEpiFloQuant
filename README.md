@@ -99,14 +99,37 @@ Output goes to `<output folder>/<session name>/`: a CSV, an ROI archive, and
 per-channel audit images, all written incrementally as you go (not batched to
 the end), so a crash mid-session loses at most the one fish in progress.
 
+## Size + intensity metrics (after measuring)
+
+The dataset CSV has raw stats per channel, but comparing fish of different
+sizes needs those normalized. Run this on your computer (not from Fiji) once
+a session's CSV is done:
+
+```bash
+python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
+```
+
+Writes `..._dataset_derived.csv` next to it, with per fluorescence channel:
+
+- `{channel}_AreaFrac_Eye` -- fluorescent area / eye area (size only)
+- `{channel}_Mean` -- intensity density (amount only, no area)
+- `{channel}_CorrectedPerEyeArea` -- background-subtracted integrated
+  density (already area x intensity) / eye area -- the combined
+  size-and-amount metric, comparable across fish of different sizes.
+
+See `zfquant/derive.py` for the reasoning behind these.
+
 ## Repo layout
 
 ```
-Zebrafish_Quant.py   thin Fiji entry point
+Zebrafish_Quant.py       thin Fiji entry point
+export_derived_metrics.py  CLI: size/intensity-normalized CSV (run on your
+                            computer, after measuring -- see above)
 zfquant/
   core.py             measurement + threshold math      (pure, unit-tested)
   manifest.py         fish -> plane mapping + overrides  (pure, unit-tested)
   journal.py          append-only session state          (pure, unit-tested)
+  derive.py           post-hoc size/intensity metrics    (pure, unit-tested)
   fiji_io.py           every ImageJ/Java call lives here
   workflow.py          the per-fish state machine
   review.py             the interactive setup-time review panel
