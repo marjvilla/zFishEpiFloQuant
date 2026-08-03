@@ -177,6 +177,10 @@ def flat_stack_position_planes(image_key, slice_order, first_slice, position,
     """{channel_name: Plane} for ONE slice-block of a flat stack.
 
     `slice_order` is the channel order within a block (stride = its length).
+    A slot may be None -- a slice that was physically imaged but isn't any
+    real channel (e.g. an unused detector). It still occupies a slot and
+    counts toward the stride, so every later fish stays aligned; it just
+    produces no dict entry.
     `first_slice` is the 1-based slice index of position 1's first slice.
     `position` is the 1-based block index.
 
@@ -188,7 +192,7 @@ def flat_stack_position_planes(image_key, slice_order, first_slice, position,
     base = first_slice + (position - 1) * stride
     return dict((name, Plane(image_key, slice_index=base + offset,
                              image_title=image_title))
-               for offset, name in enumerate(slice_order))
+               for offset, name in enumerate(slice_order) if name is not None)
 
 
 class Manifest(object):

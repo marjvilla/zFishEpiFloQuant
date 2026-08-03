@@ -230,8 +230,14 @@ class ReviewSession(object):
 
     def append_slice_order_channel(self, name):
         """Click a channel button to add it as the next slice in the order,
-        one click per channel instead of typing a comma-separated list."""
-        if name in self.slice_order:
+        one click per channel instead of typing a comma-separated list.
+
+        `name` may be None -- a slice that really was imaged but isn't any
+        of the configured channels (a dead/unused detector slot, say).
+        Unlike a real channel it can be clicked more than once, since a
+        block can have more than one such slot.
+        """
+        if name is not None and name in self.slice_order:
             return
         self.slice_order.append(name)
 
@@ -243,7 +249,8 @@ class ReviewSession(object):
         self.slice_order = []
 
     def slice_order_complete(self):
-        return sorted(self.slice_order) == sorted(self.channel_names)
+        used = [n for n in self.slice_order if n is not None]
+        return sorted(used) == sorted(self.channel_names)
 
     def confirm_stack_setup(self):
         """Finish the interactive stack-setup step and start the normal
@@ -747,7 +754,10 @@ class ReviewPanel(object):
         self.content_panel.add(self._spacer())
 
         self.content_panel.add(self._heading(
-            "2. Click channels in the order they appear in the stack:"))
+            "2. Click channels in the order they appear in the stack. If a "
+            "slice was imaged but isn't one of your channels (e.g. it was "
+            "captured but has no signal), click Skip for that slice so the "
+            "positions after it still line up:"))
         order_row = JPanel(GridLayout(0, 1, 2, 2))
         for name in session.channel_names:
             used = name in session.slice_order
@@ -755,10 +765,13 @@ class ReviewPanel(object):
                                   self._make_slice_order_callback(name))
             button.setEnabled(not used)
             order_row.add(button)
+        order_row.add(self._button(
+            "Skip (imaged, not a channel)", self._make_slice_order_callback(None)))
         self.content_panel.add(order_row)
 
         order_text = "Order so far: %s" % (
-            ", ".join(session.slice_order) or "(none yet)")
+            ", ".join(n if n is not None else "(skip)"
+                     for n in session.slice_order) or "(none yet)")
         self.content_panel.add(self._label(order_text, size=11))
 
         controls = JPanel(GridLayout(1, 0, 4, 4))

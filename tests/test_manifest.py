@@ -203,6 +203,27 @@ class TestFlatStackPositionPlanes(unittest.TestCase):
                 m.set_plane(fish, name, plane)
         self.assertEqual(m.resolve(1, "BF").plane, m.resolve(2, "BF").plane)
 
+    def test_none_slot_is_skipped_but_still_counts_toward_stride(self):
+        """A slice was imaged but isn't a real channel (e.g. RFP, GFP,
+        (skip), BF) -- it must not appear in the result, but the stride
+        must still be 4 so fish 2 lands on the right slices."""
+        order = ["RFP", "GFP", None, "BF"]
+        fish1 = manifest.flat_stack_position_planes(-3, order, 1, 1)
+        self.assertEqual(sorted(fish1.keys()), ["BF", "GFP", "RFP"])
+        self.assertEqual(fish1["RFP"].slice_index, 1)
+        self.assertEqual(fish1["GFP"].slice_index, 2)
+        self.assertEqual(fish1["BF"].slice_index, 4)
+
+        fish2 = manifest.flat_stack_position_planes(-3, order, 1, 2)
+        self.assertEqual(fish2["RFP"].slice_index, 5)
+        self.assertEqual(fish2["GFP"].slice_index, 6)
+        self.assertEqual(fish2["BF"].slice_index, 8)
+
+    def test_multiple_none_slots_in_one_block(self):
+        order = [None, "BF", None]
+        fish2 = manifest.flat_stack_position_planes(-3, order, 1, 2)
+        self.assertEqual(fish2, {"BF": manifest.Plane(-3, slice_index=5)})
+
 
 class TestFishCount(unittest.TestCase):
 
