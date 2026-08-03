@@ -4,6 +4,8 @@ A Fiji/ImageJ tool for quantifying fluorescent signal (GFP, RFP, ...) in
 zebrafish epi-fluorescence images, normalized against eye area from
 brightfield.
 
+Repo: https://github.com/marjvilla/zFishEpiFloQuant
+
 ```
 Corrected Intensity = FL Integrated Density - (Mean Background Intensity x FL Area)
 ```
@@ -13,7 +15,7 @@ Corrected Intensity = FL Integrated Density - (Mean Background Intensity x FL Ar
 Requires [Fiji](https://fiji.sc) already installed, and `git`.
 
 ```bash
-git clone <this repo's URL>
+git clone https://github.com/marjvilla/zFishEpiFloQuant.git
 cd zFishEpiFloQuant
 ./install.sh
 ```
@@ -99,14 +101,44 @@ Output goes to `<output folder>/<session name>/`: a CSV, an ROI archive, and
 per-channel audit images, all written incrementally as you go (not batched to
 the end), so a crash mid-session loses at most the one fish in progress.
 
+## Size + intensity metrics (after measuring)
+
+A standalone side tool, separate from the Fiji plugin -- it never runs
+inside Fiji, only afterward, on your computer, against the CSV the plugin
+already wrote. The dataset CSV has raw stats per channel, but comparing fish
+of different sizes needs those normalized. Once a session's CSV is done:
+
+```bash
+python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
+```
+
+Writes two files next to it:
+
+- `..._dataset_derived.csv` -- every raw + normalized column, per
+  fluorescence channel:
+  - `{channel}_AreaFrac_Eye` -- fluorescent area / eye area (size only)
+  - `{channel}_Mean` -- intensity density (amount only, no area)
+  - `{channel}_CorrectedPerEyeArea` -- background-subtracted integrated
+    density (already area x intensity) / eye area -- the combined
+    size-and-amount metric, comparable across fish of different sizes.
+- `..._dataset_summary.csv` -- just `FishID` and the three normalized
+  metrics above per channel (no `FileName`, no raw `Area`/`Corrected`),
+  one row per fish -- meant to be pasted straight into a t-test / stats
+  tool without stripping columns first.
+
+See `zfquant/derive.py` for the reasoning behind these.
+
 ## Repo layout
 
 ```
-Zebrafish_Quant.py   thin Fiji entry point
+Zebrafish_Quant.py       thin Fiji entry point
+export_derived_metrics.py  CLI: size/intensity-normalized CSV (run on your
+                            computer, after measuring -- see above)
 zfquant/
   core.py             measurement + threshold math      (pure, unit-tested)
   manifest.py         fish -> plane mapping + overrides  (pure, unit-tested)
   journal.py          append-only session state          (pure, unit-tested)
+  derive.py           post-hoc size/intensity metrics    (pure, unit-tested)
   fiji_io.py           every ImageJ/Java call lives here
   workflow.py          the per-fish state machine
   review.py             the interactive setup-time review panel
