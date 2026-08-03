@@ -265,15 +265,6 @@ class Controller(object):
                     "Space. The threshold is measured from it."
                     % self.s.manifest.describe(self.s.fish_ordinal, name))
 
-    def _arm_signal(self, working, name):
-        fiji_io.arm_tool(fiji_io.TOOL_RECTANGLE)
-        self._phase = PHASE_SIGNAL
-        working.deleteRoi()
-        self.status("Drag a box around the %s signal, then Space. Everything "
-                    "above threshold inside the box is selected. Adjusted the "
-                    "threshold sliders? Use Threshold (T) first to lock that "
-                    "value in." % name)
-
     def _close_working_image(self):
         if self._working_imp is not None:
             fiji_io.close_working_copy(self._working_imp)
@@ -383,20 +374,31 @@ class Controller(object):
         self._push_undo("background for %s" % name,
                         lambda: self._undo_background(name, roi_names))
 
+        # Arm the rectangle tool and clear any stale selection FIRST. Both
+        # touch the image, and ImageJ's Threshold window can silently
+        # recompute its own value in response to ANY image change that
+        # happens after it was set -- including these -- discarding what we
+        # just set before the operator ever looks at it. Opening/setting the
+        # threshold window has to be the LAST thing that touches this image,
+        # or the operator sees an already-reset value the moment they look,
+        # and no amount of explicit-capture discipline on their end can fix a
+        # window that was already wrong before they touched it.
+        fiji_io.arm_tool(fiji_io.TOOL_RECTANGLE)
+        working.deleteRoi()
+        self._phase = PHASE_SIGNAL
+
         # Opens the real, draggable Threshold window as a VISUAL aid -- the
         # operator can see the red overlay and drag the sliders. But its
-        # displayed value is not trusted passively: ImageJ's Threshold window
-        # can silently recompute its own default on any later image-update
-        # event (drawing the signal box counts), not just on opening, so
-        # reading it back lazily at accept time is not reliable -- it was
-        # observed reverting to (0, ~box max) between arming and accepting,
-        # which is not a threshold at all and slipped an unthresholded box
-        # into real data. self._threshold (set above, used as-is by
-        # _accept_signal) is the value actually applied. An operator who
-        # wants to use their own adjusted sliders instead has to explicitly
-        # lock it in via capture_threshold() -- see its docstring.
+        # displayed value is not trusted passively at accept time:
+        # self._threshold (set above) is what _accept_signal actually uses
+        # unless the operator explicitly locks in the sliders via
+        # capture_threshold() (T) -- see its docstring for why a passive
+        # read-at-accept-time is not reliable even with this reordering.
         fiji_io.open_threshold_window(working, threshold)
-        self._arm_signal(working, name)
+        self.status("Drag a box around the %s signal, then Space. Everything "
+                   "above threshold inside the box is selected. Adjusted the "
+                   "threshold sliders? Use Threshold (T) first to lock that "
+                   "value in." % name)
 
     def capture_threshold(self):
         """Explicit "use what I see" action for the signal step: locks in
