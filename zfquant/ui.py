@@ -167,6 +167,7 @@ class ControlPanel(object):
         root.add(self._heading("This fish"))
         root.add(self._button_grid([
             ("Accept  (Space)", self.controller.accept),
+            ("Use threshold sliders  (T)", self.controller.capture_threshold),
             ("Skip channel  (S)", self.controller.skip),
             ("Undo  (Backspace)", self._confirm_undo),
             ("Save fish  (Enter)", self.controller.commit),
@@ -266,6 +267,7 @@ class ControlPanel(object):
             KeyEvent.VK_ENTER: self.controller.commit,
             KeyEvent.VK_S: self.controller.skip,
             KeyEvent.VK_P: self.controller.use_current_plane,
+            KeyEvent.VK_T: self.controller.capture_threshold,
             KeyEvent.VK_BACK_SPACE: self._confirm_undo,
         }
 

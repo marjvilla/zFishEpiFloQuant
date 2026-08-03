@@ -270,7 +270,9 @@ class Controller(object):
         self._phase = PHASE_SIGNAL
         working.deleteRoi()
         self.status("Drag a box around the %s signal, then Space. Everything "
-                    "above threshold inside the box is selected." % name)
+                    "above threshold inside the box is selected. Adjusted the "
+                    "threshold sliders? Use Threshold (T) first to lock that "
+                    "value in." % name)
 
     def _close_working_image(self):
         if self._working_imp is not None:
@@ -381,15 +383,55 @@ class Controller(object):
         self._push_undo("background for %s" % name,
                         lambda: self._undo_background(name, roi_names))
 
-        # Opens the real, draggable Threshold window rather than a static red
-        # overlay, so the computed cutoff is a starting point the operator can
-        # adjust, not a fixed answer -- _accept_signal reads back whatever the
-        # sliders are actually at when the signal box is accepted.
+        # Opens the real, draggable Threshold window as a VISUAL aid -- the
+        # operator can see the red overlay and drag the sliders. But its
+        # displayed value is not trusted passively: ImageJ's Threshold window
+        # can silently recompute its own default on any later image-update
+        # event (drawing the signal box counts), not just on opening, so
+        # reading it back lazily at accept time is not reliable -- it was
+        # observed reverting to (0, ~box max) between arming and accepting,
+        # which is not a threshold at all and slipped an unthresholded box
+        # into real data. self._threshold (set above, used as-is by
+        # _accept_signal) is the value actually applied. An operator who
+        # wants to use their own adjusted sliders instead has to explicitly
+        # lock it in via capture_threshold() -- see its docstring.
         fiji_io.open_threshold_window(working, threshold)
         self._arm_signal(working, name)
 
+    def capture_threshold(self):
+        """Explicit "use what I see" action for the signal step: locks in
+        whatever the Threshold window's sliders show RIGHT NOW as the
+        threshold for the box about to be accepted.
+
+        This exists instead of _accept_signal silently reading back the
+        live processor threshold, because that passive read is exactly what
+        was unreliable -- ImageJ's Threshold window can recompute its own
+        default on any image-update event that happens between arming and
+        accepting, not only on opening, so "whatever is on the processor by
+        the time Space is pressed" is not trustworthy. Capturing it here, at
+        the exact moment the operator asks for it, has no such gap.
+        """
+        if self._phase != PHASE_SIGNAL:
+            self.status("Adjust the threshold sliders during the signal "
+                       "step, then press this to use that value.")
+            return
+        working = self._working_imp
+        if working is None or not fiji_io.is_open(working):
+            self.status("The working image was closed.")
+            return
+        live = fiji_io.current_threshold(working)
+        if live is None:
+            self.status("No threshold is currently set on the image.")
+            return
+        low, high = live
+        self._threshold = core.ThresholdResult(low, high, core.THRESH_MANUAL,
+                                               overridden=True)
+        self.status("Using threshold %.1f-%.1f for this signal (locked in "
+                   "from the sliders)." % (low, high))
+        self.refresh()
+
     def _accept_signal(self, working, box_roi):
-        threshold = self._current_threshold_for_signal(working)
+        threshold = self._threshold
         if threshold is None:
             self.warn("No threshold is set. Re-arm the channel to recompute "
                       "one.")
@@ -425,22 +467,6 @@ class Controller(object):
         self._push_undo("signal for %s" % name, lambda: self._undo_capture(
             name, name, roi_names, image_path))
         self._after_channel()
-
-    def _current_threshold_for_signal(self, working):
-        """The threshold actually in effect right now, which may differ from
-        what was computed at background-accept time if the operator dragged
-        ImageJ's own Threshold sliders in between. Using this instead of the
-        stored value is what makes that on-screen adjustment take effect
-        rather than being silently discarded."""
-        live = fiji_io.current_threshold(working)
-        if live is None:
-            return self._threshold
-        low, high = live
-        if (self._threshold is not None and low == self._threshold.low
-                and high == self._threshold.high):
-            return self._threshold   # unchanged: keep full BG-derived provenance
-        return core.ThresholdResult(low, high, core.THRESH_MANUAL,
-                                    overridden=True)
 
     def _after_channel(self):
         resolved, total = self.s.progress()
