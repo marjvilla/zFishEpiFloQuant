@@ -147,6 +147,13 @@ class ReviewSession(object):
         self.first_slice_confirmed = False
         self.slice_order = []
 
+        # Positions explicitly marked "no fish here" -- tracked separately
+        # from "just has zero entries right now" so a later Back + "Accept &
+        # Apply to Rest" sweeping forward over an already-skipped position
+        # can't silently resurrect a fish there; only add_fish_at_current()
+        # (an explicit change of mind) clears an entry from this set.
+        self._skipped_positions = set()
+
         if mode == manifest_mod.LAYOUT_PER_WINDOW:
             self._images = [imp for imp in images
                             if not fiji_io.is_working_image(imp)]
@@ -278,6 +285,8 @@ class ReviewSession(object):
         return last + 1
 
     def _ensure_default_entries(self, position):
+        if position in self._skipped_positions:
+            return
         if any(e.position == position for e in self._fish_entries):
             return
         planes = self._planes_for_position(position)
@@ -291,10 +300,12 @@ class ReviewSession(object):
     def add_fish_at_current(self):
         """Auto modes: add another fish co-located at the current position
         (multi-fish-per-image). No-op for Manual -- use assign_channel with
-        NEW_FISH instead."""
+        NEW_FISH instead. An explicit add is a change of mind about a
+        position previously marked skipped, so it un-skips it."""
         if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
             return None
         position = self.current_position_index
+        self._skipped_positions.discard(position)
         planes = self._planes_for_position(position)
         entry = ReviewFishEntry(self._next_uid(), position=position)
         for name, plane in planes.items():
@@ -304,6 +315,19 @@ class ReviewSession(object):
 
     def remove_fish(self, uid):
         self._fish_entries = [e for e in self._fish_entries if e.uid != uid]
+
+    def skip_current_position(self):
+        """Auto modes: this position has no fish at all -- a blank frame, a
+        failed acquisition, a gap. Clears every entry at the current position
+        in one click, rather than removing them one at a time, and remembers
+        that this position was deliberately left empty so a later bulk
+        "Accept & Apply to Rest" can't silently resurrect a fish here."""
+        if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
+            return
+        position = self.current_position_index
+        self._fish_entries = [e for e in self._fish_entries
+                              if e.position != position]
+        self._skipped_positions.add(position)
 
     def move_fish(self, uid, delta):
         """delta=+1/-1. Auto modes only allow swapping within the SAME
@@ -769,9 +793,18 @@ class ReviewPanel(object):
         self.content_panel.add(self._heading("Fish at this position"))
         for entry in session.entries_at_current_position():
             self.content_panel.add(self._fish_row(entry))
-        self.content_panel.add(self._button(
-            "+ Add another fish at this position",
-            self._make_add_callback()))
+
+        actions = JPanel(GridLayout(0, 1, 2, 2))
+        actions.add(self._button("+ Add another fish at this position",
+                                 self._make_add_callback()))
+        skip = self._button("Skip this position (no fish here)",
+                            self._on_skip_position)
+        skip.setToolTipText("Blank frame, failed acquisition, a gap in the "
+                            "stack -- clears every fish at this position in "
+                            "one click.")
+        actions.add(skip)
+        self.content_panel.add(actions)
+
         self.content_panel.revalidate()
         self.content_panel.repaint()
         if self.frame is not None:
@@ -916,6 +949,10 @@ class ReviewPanel(object):
             self.session.add_fish_at_current()
             self.refresh()
         return callback
+
+    def _on_skip_position(self):
+        self.session.skip_current_position()
+        self.refresh()
 
     def _make_remove_callback(self, uid):
         def callback():

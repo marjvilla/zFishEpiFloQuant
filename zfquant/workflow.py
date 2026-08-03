@@ -79,6 +79,7 @@ class Session(object):
         self.backgrounds = {}       # name -> Capture
         self.skipped = set()
         self.finished = False
+        self.auto_skip_omitted_channels()
 
     # -- per-fish bookkeeping --------------------------------------------
 
@@ -86,6 +87,21 @@ class Session(object):
         self.captures = {}
         self.backgrounds = {}
         self.skipped = set()
+
+    def auto_skip_omitted_channels(self):
+        """A channel the manifest says this fish doesn't have (omitted
+        during review, see review.py's per-fish Omit toggle) should just
+        show up already resolved in the checklist -- not require the
+        operator to click it once and get a message back explaining that.
+        Marks it skipped proactively, before any interaction, for whatever
+        fish is current right now."""
+        if not self.manifest.has_fish(self.fish_ordinal):
+            return
+        for name in self.channel_names:
+            if name == self.bf_name:
+                continue
+            if self.manifest.resolve(self.fish_ordinal, name).plane is None:
+                self.skipped.add(name)
 
     def state_of(self, name):
         if name in self.skipped:
@@ -199,13 +215,12 @@ class Controller(object):
                 session.fish_ordinal):
             # This fish IS in the reviewed plan; it just doesn't have this
             # channel -- deliberately omitted during review (see review.py's
-            # per-fish channel-omit toggle), not merely unmapped by accident.
-            # Auto-mark it skipped rather than treating it as a drift needing
-            # an override warning.
+            # per-fish channel-omit toggle). Session.auto_skip_omitted_channels
+            # already marks this at the start of every fish, so the checklist
+            # shows it as done/skipped before the operator ever clicks it;
+            # reaching here just means they clicked it anyway. Nothing to arm
+            # -- stay quiet about it rather than popping up an explanation.
             session.skipped.add(name)
-            self.status("%s was omitted for this fish during review. Marked "
-                       "skipped -- pick another channel, or Space to "
-                       "continue." % name)
             self.refresh()
             return
 
@@ -736,6 +751,7 @@ class Controller(object):
 
         session.reset_fish()
         session.fish_ordinal = session.journal.next_sequence()
+        session.auto_skip_omitted_channels()
         self._fish_undo = []
 
         committed = session.committed_count()
@@ -831,6 +847,7 @@ class Controller(object):
 
         session.reset_fish()
         session.fish_ordinal = session.journal.next_sequence()
+        session.auto_skip_omitted_channels()
         session.finished = False
         self._fish_undo = []
         self.status("Withdrew %s. It stays in the journal as a tombstone; "
