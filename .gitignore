@@ -2,3 +2,6 @@ __pycache__/
 *$py.class
 .DS_Store
 .claude/
+# Written into distribution zips by make_release_zip.sh, not tracked here.
+VERSION
+*.zip
