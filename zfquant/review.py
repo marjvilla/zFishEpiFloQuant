@@ -136,6 +136,17 @@ class ReviewSession(object):
         self.total_positions = 0
         self._images = []
 
+        # Flat stack needs the channel order and first slice before it can
+        # compute a position sequence at all -- both used to be typed blind
+        # in a startup.py dialog; now they're set by walking the operator
+        # through an interactive setup screen first (see stack_setup_done /
+        # set_first_slice_to_current / append_slice_order_channel /
+        # confirm_stack_setup below), with the real stack visible the whole
+        # time. Position-walk setup is deferred until that's confirmed.
+        self.stack_setup_done = (mode != manifest_mod.LAYOUT_FLAT_STACK)
+        self.first_slice_confirmed = False
+        self.slice_order = []
+
         if mode == manifest_mod.LAYOUT_PER_WINDOW:
             self._images = [imp for imp in images
                             if not fiji_io.is_working_image(imp)]
@@ -156,18 +167,17 @@ class ReviewSession(object):
                     self.total_positions = target.getNSlices()
                 else:
                     self.total_positions = target.getNFrames()
-            else:   # LAYOUT_FLAT_STACK
-                order = config.slice_order or self.channel_names
-                stride = len(order)
-                total_slices = target.getStackSize()
-                self.total_positions = max(
-                    0, (total_slices - config.first_slice + 1) // stride)
+                self.current_position_index = 1 if self.total_positions >= 1 else 0
+                if self.current_position_index:
+                    self._ensure_default_entries(self.current_position_index)
+            else:
+                # LAYOUT_FLAT_STACK: total_positions/current_position_index
+                # are set later, by confirm_stack_setup(), once the operator
+                # has defined first_slice and slice_order interactively.
+                self.current_position_index = 0
 
-            self.current_position_index = 1 if self.total_positions >= 1 else 0
-            if self.current_position_index:
-                self._ensure_default_entries(self.current_position_index)
-
-        self._refresh_label()
+        if self.stack_setup_done:
+            self._refresh_label()
 
     # -- position math (Auto modes only) -----------------------------------
 
@@ -193,6 +203,58 @@ class ReviewSession(object):
         if self.bf_name in planes:
             return planes[self.bf_name]
         return planes[self.channel_names[0]]
+
+    # -- interactive stack setup (LAYOUT_FLAT_STACK only) --------------------
+    #
+    # Replaces the old blind "type the channel order, type the first slice"
+    # dialog: the operator navigates the REAL, visible stack (this panel is
+    # non-modal, so nothing stops them scrolling it) to confirm both instead
+    # of typing either one.
+
+    def set_first_slice_to_current(self):
+        """Whatever slice the operator currently has the real stack scrolled
+        to becomes fish 1's first slice."""
+        if self._target_imp is None:
+            return None
+        slice_index = self._target_imp.getCurrentSlice()
+        self.config.first_slice = slice_index
+        self.first_slice_confirmed = True
+        return slice_index
+
+    def append_slice_order_channel(self, name):
+        """Click a channel button to add it as the next slice in the order,
+        one click per channel instead of typing a comma-separated list."""
+        if name in self.slice_order:
+            return
+        self.slice_order.append(name)
+
+    def undo_slice_order(self):
+        if self.slice_order:
+            self.slice_order.pop()
+
+    def reset_slice_order(self):
+        self.slice_order = []
+
+    def slice_order_complete(self):
+        return sorted(self.slice_order) == sorted(self.channel_names)
+
+    def confirm_stack_setup(self):
+        """Finish the interactive stack-setup step and start the normal
+        position walk. Returns False (no-op) if first_slice/slice_order
+        aren't both set yet."""
+        if not self.first_slice_confirmed or not self.slice_order_complete():
+            return False
+        self.config.slice_order = list(self.slice_order)
+        stride = len(self.slice_order)
+        total_slices = self._target_imp.getStackSize()
+        self.total_positions = max(
+            0, (total_slices - self.config.first_slice + 1) // stride)
+        self.stack_setup_done = True
+        self.current_position_index = 1 if self.total_positions >= 1 else 0
+        if self.current_position_index:
+            self._ensure_default_entries(self.current_position_index)
+        self._refresh_label()
+        return True
 
     # -- fish list -----------------------------------------------------------
 
@@ -452,6 +514,8 @@ class ReviewPanel(object):
         self.content_panel = None
         self.done_button = None
         self.apply_button = None
+        self.back_button = None
+        self.next_button = None
         self._pending_channel = None   # Manual mode: channel picked, waiting
                                        # for a fish click to complete the
                                        # assignment -- see _manual_channel_row
@@ -491,16 +555,17 @@ class ReviewPanel(object):
 
         nav = JPanel(GridLayout(0, 2, 4, 4))
 
-        back = self._button("< Back", self._on_back)
-        back.setToolTipText("Go to the previous position (or window, in "
-                            "Manual mode) to review or change it. Nothing "
-                            "already reviewed is lost.")
-        nav.add(back)
+        self.back_button = self._button("< Back", self._on_back)
+        self.back_button.setToolTipText(
+            "Go to the previous position (or window, in Manual mode) to "
+            "review or change it. Nothing already reviewed is lost.")
+        nav.add(self.back_button)
 
-        next_ = self._button("Next >", self._on_next)
-        next_.setToolTipText("Accept what's shown for this position as-is "
-                             "and move to the next one.")
-        nav.add(next_)
+        self.next_button = self._button("Next >", self._on_next)
+        self.next_button.setToolTipText(
+            "Accept what's shown for this position as-is and move to the "
+            "next one.")
+        nav.add(self.next_button)
 
         self.apply_button = self._button("Accept & Apply to Rest",
                                          self._on_apply_range)
@@ -621,11 +686,73 @@ class ReviewPanel(object):
 
     def _refresh_now(self):
         session = self.session
+        if (session.mode == manifest_mod.LAYOUT_FLAT_STACK
+                and not session.stack_setup_done):
+            self._render_stack_setup()
+            return
+        self.back_button.setEnabled(True)
+        self.next_button.setEnabled(True)
         if session.mode == manifest_mod.LAYOUT_PER_WINDOW:
             self._render_manual()
         else:
             self._render_auto()
         self.done_button.setEnabled(session.is_complete())
+
+    def _render_stack_setup(self):
+        """Auto Single Stack only: confirm the channel order and first slice
+        by looking at the real stack and clicking, instead of typing either
+        one blind. Back/Next/Apply/Done are all disabled here -- there is no
+        position sequence to walk yet."""
+        session = self.session
+        self.position_label.setText("Auto Single Stack -- set up the stack")
+        self.apply_button.setVisible(False)
+        self.back_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+        self.done_button.setEnabled(False)
+
+        self.content_panel.removeAll()
+
+        self.content_panel.add(self._heading(
+            "1. Scroll the stack to fish 1's first slice, then click:"))
+        first_text = ("Fish 1 starts at slice %d" % session.config.first_slice
+                     if session.first_slice_confirmed
+                     else "(not set yet -- scroll the stack, then click below)")
+        self.content_panel.add(self._button(
+            "Use current slice as fish 1's start", self._on_set_first_slice))
+        self.content_panel.add(self._label(first_text, size=11))
+        self.content_panel.add(self._spacer())
+
+        self.content_panel.add(self._heading(
+            "2. Click channels in the order they appear in the stack:"))
+        order_row = JPanel(GridLayout(0, 1, 2, 2))
+        for name in session.channel_names:
+            used = name in session.slice_order
+            button = self._button(name + (" (used)" if used else ""),
+                                  self._make_slice_order_callback(name))
+            button.setEnabled(not used)
+            order_row.add(button)
+        self.content_panel.add(order_row)
+
+        order_text = "Order so far: %s" % (
+            ", ".join(session.slice_order) or "(none yet)")
+        self.content_panel.add(self._label(order_text, size=11))
+
+        controls = JPanel(GridLayout(1, 0, 4, 4))
+        controls.add(self._button("Undo last", self._on_undo_slice_order))
+        controls.add(self._button("Reset", self._on_reset_slice_order))
+        self.content_panel.add(controls)
+
+        self.content_panel.add(self._spacer())
+        ready = session.first_slice_confirmed and session.slice_order_complete()
+        confirm = self._button("Confirm setup, start reviewing",
+                               self._on_confirm_stack_setup)
+        confirm.setEnabled(ready)
+        self.content_panel.add(confirm)
+
+        self.content_panel.revalidate()
+        self.content_panel.repaint()
+        if self.frame is not None:
+            self.frame.pack()
 
     def _render_auto(self):
         session = self.session
@@ -636,6 +763,7 @@ class ReviewPanel(object):
                                          session.current_position_index,
                                          session.total_positions))
         self.apply_button.setVisible(True)
+        self.apply_button.setEnabled(True)
 
         self.content_panel.removeAll()
         self.content_panel.add(self._heading("Fish at this position"))
@@ -806,6 +934,36 @@ class ReviewPanel(object):
             self.session.toggle_channel_skip(uid, channel_name)
             self.refresh()
         return callback
+
+    # -- interactive stack setup callbacks (LAYOUT_FLAT_STACK only) --------
+
+    def _on_set_first_slice(self):
+        self.session.set_first_slice_to_current()
+        self.refresh()
+
+    def _make_slice_order_callback(self, name):
+        def callback():
+            self.session.append_slice_order_channel(name)
+            self.refresh()
+        return callback
+
+    def _on_undo_slice_order(self):
+        self.session.undo_slice_order()
+        self.refresh()
+
+    def _on_reset_slice_order(self):
+        self.session.reset_slice_order()
+        self.refresh()
+
+    def _on_confirm_stack_setup(self):
+        if not self.session.confirm_stack_setup():
+            JOptionPane.showMessageDialog(
+                self.frame,
+                "Set fish 1's first slice and click every channel once "
+                "before continuing.",
+                "Zebrafish Quant - Review", JOptionPane.WARNING_MESSAGE)
+            return
+        self.refresh()
 
     def _later(self, callback):
         def run():

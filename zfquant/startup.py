@@ -143,30 +143,13 @@ def _layout_details(config):
             else "z"
         return True
 
-    if config.layout == manifest_mod.LAYOUT_FLAT_STACK:
-        dialog = GenericDialog("Single stack layout")
-        dialog.addMessage("Slices are assumed to run fish by fish, with the\n"
-                          "channels in the order below inside each fish.\n\n"
-                          "You'll step through the resulting blocks next and "
-                          "can\ncorrect anything that doesn't match.")
-        dialog.addStringField("Channel order per fish:",
-                              ", ".join(config.channel_names), 28)
-        dialog.addNumericField("First slice of fish 1:", 1, 0)
-        dialog.showDialog()
-        if dialog.wasCanceled():
-            return False
-        order = [n.strip() for n in dialog.getNextString().split(",")
-                 if n.strip()]
-        unknown = [n for n in order if n not in config.channel_names]
-        if unknown:
-            IJ.error("Unknown channel name(s) in the order: %s"
-                     % ", ".join(unknown))
-            return False
-        config.slice_order = order or config.channel_names
-        config.first_slice = max(1, _safe_int(dialog.getNextNumber(), 1))
-        return True
-
-    return True   # LAYOUT_PER_WINDOW (Manual): nothing to ask up front
+    # LAYOUT_FLAT_STACK and LAYOUT_PER_WINDOW (Manual) ask nothing up front.
+    # Flat stack used to ask for channel order (typed as text) and first
+    # slice (typed as a number) here, blind -- both are now set interactively
+    # in review.py instead: navigate to the real first slice and click a
+    # button, then click channel buttons in the order they actually appear,
+    # with the stack itself visible the whole time.
+    return True
 
 
 def ask_about_existing_session(paths):
