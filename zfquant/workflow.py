@@ -143,6 +143,7 @@ class Controller(object):
         self._armed_plane = None       # the REAL source plane, for provenance
         self._resolution = None
         self._threshold = None
+        self._bg_stats = None          # for _warn_if_threshold_implausible
         self._committing = False
         # Stack of (label, undo_callable) for the CURRENT fish only: accepted
         # eye/background/signal captures and skips, most recent last. Cleared
@@ -368,6 +369,7 @@ class Controller(object):
             return
 
         self._threshold = threshold
+        self._bg_stats = stats   # for the plausibility check in _accept_signal
         name = self._channel
 
         roi_names, _ = self._export_background_only(name)
@@ -380,64 +382,73 @@ class Controller(object):
         # happens after it was set -- including these -- discarding what we
         # just set before the operator ever looks at it. Opening/setting the
         # threshold window has to be the LAST thing that touches this image,
-        # or the operator sees an already-reset value the moment they look,
-        # and no amount of explicit-capture discipline on their end can fix a
-        # window that was already wrong before they touched it.
+        # so the sliders hold still from here on except for a deliberate drag
+        # by the operator -- which _accept_signal always honors, see below.
         fiji_io.arm_tool(fiji_io.TOOL_RECTANGLE)
         working.deleteRoi()
         self._phase = PHASE_SIGNAL
 
-        # Opens the real, draggable Threshold window as a VISUAL aid -- the
-        # operator can see the red overlay and drag the sliders. But its
-        # displayed value is not trusted passively at accept time:
-        # self._threshold (set above) is what _accept_signal actually uses
-        # unless the operator explicitly locks in the sliders via
-        # capture_threshold() (T) -- see its docstring for why a passive
-        # read-at-accept-time is not reliable even with this reordering.
+        # Opens the real, draggable Threshold window seeded with the computed
+        # default -- a starting point the operator is free to drag away from.
+        # Whatever the sliders show at the moment Space is pressed is always
+        # what gets used (see _accept_signal): the computed value here is
+        # deliberately just a convenience, never a fallback that silently
+        # overrides a manual adjustment.
         fiji_io.open_threshold_window(working, threshold)
-        self.status("Drag a box around the %s signal, then Space. Everything "
-                   "above threshold inside the box is selected. Adjusted the "
-                   "threshold sliders? Use Threshold (T) first to lock that "
-                   "value in." % name)
+        self.status("Drag the threshold sliders if you want, then draw a box "
+                   "around the %s signal and press Space. Whatever the "
+                   "sliders show at that moment is what gets used." % name)
 
-    def capture_threshold(self):
-        """Explicit "use what I see" action for the signal step: locks in
-        whatever the Threshold window's sliders show RIGHT NOW as the
-        threshold for the box about to be accepted.
+    def _current_threshold_for_signal(self, working):
+        """Always read the threshold LIVE off the sliders at the moment of
+        accepting the signal box -- the operator's adjustment always wins,
+        with the computed default (self._threshold, seeded when the
+        background was accepted) only mattering as whatever starting point
+        they chose not to move.
 
-        This exists instead of _accept_signal silently reading back the
-        live processor threshold, because that passive read is exactly what
-        was unreliable -- ImageJ's Threshold window can recompute its own
-        default on any image-update event that happens between arming and
-        accepting, not only on opening, so "whatever is on the processor by
-        the time Space is pressed" is not trustworthy. Capturing it here, at
-        the exact moment the operator asks for it, has no such gap.
+        This passive read is safe now specifically because _accept_background
+        (above) made opening/seeding the threshold window the LAST thing that
+        touches the image -- nothing in our own code runs between then and
+        here that could silently reset the window, which is what made a
+        passive read unreliable before that reordering fix. The only thing
+        that can change the value between the two points now is a deliberate
+        drag by the operator, which is exactly what should be honored.
         """
-        if self._phase != PHASE_SIGNAL:
-            self.status("Adjust the threshold sliders during the signal "
-                       "step, then press this to use that value.")
-            return
-        working = self._working_imp
-        if working is None or not fiji_io.is_open(working):
-            self.status("The working image was closed.")
-            return
         live = fiji_io.current_threshold(working)
         if live is None:
-            self.status("No threshold is currently set on the image.")
-            return
+            return None
         low, high = live
-        self._threshold = core.ThresholdResult(low, high, core.THRESH_MANUAL,
-                                               overridden=True)
-        self.status("Using threshold %.1f-%.1f for this signal (locked in "
-                   "from the sliders)." % (low, high))
-        self.refresh()
+        if (self._threshold is not None and low == self._threshold.low
+                and high == self._threshold.high):
+            return self._threshold   # untouched: keep full BG-derived provenance
+        return core.ThresholdResult(low, high, core.THRESH_MANUAL,
+                                    overridden=True)
+
+    def _warn_if_threshold_implausible(self, threshold):
+        """A live-read threshold could still be wrong if something outside
+        our control (or a bug we haven't found yet) resets the window --
+        this is the safety net for that, not a routine check. Never blocks:
+        matches the plausibility-check convention elsewhere in this codebase
+        (warn, never refuse) since a legitimately very permissive choice is
+        the operator's call, not this tool's to override."""
+        if self._bg_stats is None:
+            return
+        bg_mean = self._bg_stats.get("Mean")
+        if bg_mean is None or threshold.low >= bg_mean:
+            return
+        self.warn("Threshold low (%.1f) is below the measured background "
+                  "mean (%.1f) -- this may not be excluding background at "
+                  "all. Check the sliders if that's not what you intended."
+                  % (threshold.low, bg_mean))
 
     def _accept_signal(self, working, box_roi):
-        threshold = self._threshold
+        threshold = self._current_threshold_for_signal(working)
         if threshold is None:
-            self.warn("No threshold is set. Re-arm the channel to recompute "
-                      "one.")
+            self.warn("No threshold is set on the sliders. Re-arm the "
+                      "channel, or adjust the Threshold window, then try "
+                      "again.")
             return
+        self._warn_if_threshold_implausible(threshold)
 
         selection = fiji_io.box_select(working, box_roi, threshold,
                                        min_area=self.s.min_area)
