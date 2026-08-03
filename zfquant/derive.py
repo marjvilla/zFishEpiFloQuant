@@ -21,6 +21,11 @@ fish of different sizes are comparable:
                                   (already amount x extent) / eye area --
                                   the recommended combined size+intensity
                                   metric.
+
+Two exports: export_derived_csv (every raw + normalized column, for
+checking the normalization itself) and export_summary_csv (just FishID and
+the three normalized metrics per channel, meant to be pasted straight into
+a t-test / stats tool without stripping columns first).
 """
 
 import csv
@@ -88,25 +93,77 @@ def derive_row(row, channel_names, round_to=4):
     return out
 
 
-def export_derived_csv(input_path, output_path=None, round_to=4):
-    """Read a zfquant session dataset CSV and write a derived-metrics CSV
-    next to it (or at `output_path`). Returns (output_path, channel_names)."""
+def summary_header(channel_names):
+    """Just the three normalized/comparable metrics per channel -- no
+    FileName, no raw passthroughs (Area, Corrected) -- for pasting straight
+    into a t-test / stats tool without extra columns to strip first."""
+    header = ["FishID"]
+    for name in channel_names:
+        header += ["%s_AreaFrac_Eye" % name, "%s_Mean" % name,
+                   "%s_CorrectedPerEyeArea" % name]
+    return header
+
+
+def summary_row(row, channel_names, round_to=4):
+    full = derive_row(row, channel_names, round_to)
+    out = {"FishID": full["FishID"]}
+    for name in channel_names:
+        for suffix in ("AreaFrac_Eye", "Mean", "CorrectedPerEyeArea"):
+            key = "%s_%s" % (name, suffix)
+            out[key] = full[key]
+    return out
+
+
+def _read_dataset_csv(input_path):
     with open(input_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         header = reader.fieldnames or []
         rows = list(reader)
+    return header, rows
 
+
+def _default_output_path(input_path, suffix):
+    base, ext = os.path.splitext(input_path)
+    return base + suffix + (ext or ".csv")
+
+
+def export_derived_csv(input_path, output_path=None, round_to=4):
+    """Read a zfquant session dataset CSV and write a derived-metrics CSV
+    next to it (or at `output_path`) -- every raw and normalized column, for
+    checking the normalization itself. Returns (output_path, channel_names).
+    See export_summary_csv for a stats-ready, columns-only-you-need version.
+    """
+    header, rows = _read_dataset_csv(input_path)
     channel_names = fluorescence_channel_names(header)
     out_header = derived_header(channel_names)
     derived_rows = [derive_row(row, channel_names, round_to) for row in rows]
 
     if output_path is None:
-        base, ext = os.path.splitext(input_path)
-        output_path = base + "_derived" + (ext or ".csv")
+        output_path = _default_output_path(input_path, "_derived")
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=out_header, lineterminator="\r\n")
         writer.writeheader()
         writer.writerows(derived_rows)
+
+    return output_path, channel_names
+
+
+def export_summary_csv(input_path, output_path=None, round_to=4):
+    """Same source data as export_derived_csv, but only FishID and the
+    three normalized metrics per channel -- meant to be pasted straight
+    into a t-test / stats tool, one row per fish."""
+    header, rows = _read_dataset_csv(input_path)
+    channel_names = fluorescence_channel_names(header)
+    out_header = summary_header(channel_names)
+    summary_rows = [summary_row(row, channel_names, round_to) for row in rows]
+
+    if output_path is None:
+        output_path = _default_output_path(input_path, "_summary")
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=out_header, lineterminator="\r\n")
+        writer.writeheader()
+        writer.writerows(summary_rows)
 
     return output_path, channel_names

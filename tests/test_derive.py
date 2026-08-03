@@ -102,5 +102,45 @@ class TestExportDerivedCsv(unittest.TestCase):
             shutil.rmtree(tmpdir)
 
 
+class TestSummaryRow(unittest.TestCase):
+
+    def test_only_normalized_columns_no_raw_passthroughs(self):
+        row = {"FileName": "f.tif", "FishID": "Fish 1", "EyeArea": "1000",
+              "RFP_Area": "250", "RFP_Mean": "500", "RFP_Corrected": "8000"}
+        out = derive.summary_row(row, ["RFP"])
+        self.assertEqual(sorted(out.keys()),
+                         ["FishID", "RFP_AreaFrac_Eye", "RFP_CorrectedPerEyeArea",
+                          "RFP_Mean"])
+        self.assertNotIn("FileName", out)
+        self.assertEqual(out["RFP_AreaFrac_Eye"], 0.25)
+        self.assertEqual(out["RFP_CorrectedPerEyeArea"], 8)
+
+
+class TestExportSummaryCsv(unittest.TestCase):
+
+    def test_round_trip_through_a_real_file(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            input_path = os.path.join(tmpdir, "dataset.csv")
+            with open(input_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f, lineterminator="\r\n")
+                writer.writerow(["FileName", "FishID", "EyeArea",
+                                 "RFP_Area", "RFP_Mean", "RFP_Corrected"])
+                writer.writerow(["f.tif", "Fish 1", "1000", "250", "500", "8000"])
+
+            output_path, channels = derive.export_summary_csv(input_path)
+            self.assertEqual(channels, ["RFP"])
+            self.assertTrue(output_path.endswith("dataset_summary.csv"))
+
+            with open(output_path, newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(rows[0]["FishID"], "Fish 1")
+            self.assertEqual(rows[0]["RFP_AreaFrac_Eye"], "0.25")
+            self.assertNotIn("RFP_Area", rows[0])
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
 if __name__ == "__main__":
     unittest.main()

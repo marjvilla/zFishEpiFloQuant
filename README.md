@@ -4,6 +4,8 @@ A Fiji/ImageJ tool for quantifying fluorescent signal (GFP, RFP, ...) in
 zebrafish epi-fluorescence images, normalized against eye area from
 brightfield.
 
+Repo: https://github.com/marjvilla/zFishEpiFloQuant
+
 ```
 Corrected Intensity = FL Integrated Density - (Mean Background Intensity x FL Area)
 ```
@@ -13,7 +15,7 @@ Corrected Intensity = FL Integrated Density - (Mean Background Intensity x FL Ar
 Requires [Fiji](https://fiji.sc) already installed, and `git`.
 
 ```bash
-git clone <this repo's URL>
+git clone https://github.com/marjvilla/zFishEpiFloQuant.git
 cd zFishEpiFloQuant
 ./install.sh
 ```
@@ -101,21 +103,28 @@ the end), so a crash mid-session loses at most the one fish in progress.
 
 ## Size + intensity metrics (after measuring)
 
-The dataset CSV has raw stats per channel, but comparing fish of different
-sizes needs those normalized. Run this on your computer (not from Fiji) once
-a session's CSV is done:
+A standalone side tool, separate from the Fiji plugin -- it never runs
+inside Fiji, only afterward, on your computer, against the CSV the plugin
+already wrote. The dataset CSV has raw stats per channel, but comparing fish
+of different sizes needs those normalized. Once a session's CSV is done:
 
 ```bash
 python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
 ```
 
-Writes `..._dataset_derived.csv` next to it, with per fluorescence channel:
+Writes two files next to it:
 
-- `{channel}_AreaFrac_Eye` -- fluorescent area / eye area (size only)
-- `{channel}_Mean` -- intensity density (amount only, no area)
-- `{channel}_CorrectedPerEyeArea` -- background-subtracted integrated
-  density (already area x intensity) / eye area -- the combined
-  size-and-amount metric, comparable across fish of different sizes.
+- `..._dataset_derived.csv` -- every raw + normalized column, per
+  fluorescence channel:
+  - `{channel}_AreaFrac_Eye` -- fluorescent area / eye area (size only)
+  - `{channel}_Mean` -- intensity density (amount only, no area)
+  - `{channel}_CorrectedPerEyeArea` -- background-subtracted integrated
+    density (already area x intensity) / eye area -- the combined
+    size-and-amount metric, comparable across fish of different sizes.
+- `..._dataset_summary.csv` -- just `FishID` and the three normalized
+  metrics above per channel (no `FileName`, no raw `Area`/`Corrected`),
+  one row per fish -- meant to be pasted straight into a t-test / stats
+  tool without stripping columns first.
 
 See `zfquant/derive.py` for the reasoning behind these.
 
