@@ -12,13 +12,18 @@ Corrected Intensity = FL Integrated Density - (Mean Background Intensity x FL Ar
 
 ## Install (one time, per computer)
 
-Requires [Fiji](https://fiji.sc) already installed, and `git`.
+Requires [Fiji](https://fiji.sc) already installed.
 
-```bash
-git clone https://github.com/marjvilla/zFishEpiFloQuant.git
-cd zFishEpiFloQuant
-./install.sh
-```
+1. Download the code: either `git clone` it (recommended -- see below), or
+   grab the [zip from GitHub](https://github.com/marjvilla/zFishEpiFloQuant)
+   (Code > Download ZIP) and unzip it.
+2. **Double-click `install.command`** in the unzipped/cloned folder. macOS
+   may warn it's from an unidentified developer the first time -- right-click
+   it and choose Open instead, once, to allow it. If this folder is a git
+   checkout, it also pulls the latest version first.
+
+That's the whole install -- no Terminal typing required. (`./install.sh`
+from Terminal still works too, if you'd rather.)
 
 Then fully quit and reopen Fiji. The tool appears as a normal menu item:
 
@@ -27,12 +32,21 @@ Then fully quit and reopen Fiji. The tool appears as a normal menu item:
 No need to open the Script Editor, pick a language, or navigate to a file --
 click the menu item like any other Fiji plugin.
 
-If `install.sh` can't find your Fiji install automatically, point it at the
-folder directly:
+If it can't find your Fiji install automatically, point it at the folder
+directly from Terminal:
 
 ```bash
 ./install.sh /Applications/Fiji        # or wherever your Fiji folder is
 ```
+
+### Getting it via git (recommended -- easiest to update)
+
+```bash
+git clone https://github.com/marjvilla/zFishEpiFloQuant.git
+cd zFishEpiFloQuant
+```
+
+Then double-click `install.command` (or run `./install.sh`) as above.
 
 ### Manual install (Windows, or if the script doesn't work for you)
 
@@ -75,6 +89,13 @@ entry point appears in the menu.
 
 ## Updating
 
+**Double-click `check_updates.command`** any time to see if a newer version
+is out. If you have a git checkout, **double-click `install.command`** again
+to pull and reinstall it in one click. If you're on a zip download instead,
+it'll tell you to grab a fresh zip (zips don't self-update).
+
+From Terminal, if you have a git checkout:
+
 ```bash
 git pull
 ```
@@ -82,6 +103,14 @@ git pull
 That's it. The Fiji menu item is a symlink into this folder, so whatever is
 checked out here is what runs -- no re-copying, no re-running `install.sh`.
 Just quit and reopen Fiji (or Help > Refresh Menus) to pick up the change.
+
+### Sending a zip to someone directly
+
+If you're the one distributing it (rather than pointing someone at GitHub),
+`git clone` from the [GitHub zip download](https://github.com/marjvilla/zFishEpiFloQuant)
+button works, but its `check_updates.command` can't tell what version it is.
+Use `./make_release_zip.sh` instead -- it bakes in a `VERSION` file so
+`check_updates.command` works for the person you send it to as well.
 
 ## Using it
 
@@ -106,11 +135,15 @@ the end), so a crash mid-session loses at most the one fish in progress.
 A standalone side tool, separate from the Fiji plugin -- it never runs
 inside Fiji, only afterward, on your computer, against the CSV the plugin
 already wrote. The dataset CSV has raw stats per channel, but comparing fish
-of different sizes needs those normalized. Once a session's CSV is done:
+of different sizes needs those normalized. Once a session's CSV is done,
+either:
 
-```bash
-python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
-```
+- **Drag `..._dataset.csv` onto `export_derived_metrics.command`** in
+  Finder (or double-click it and paste the path when asked), or
+- from Terminal:
+  ```bash
+  python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
+  ```
 
 Writes two files next to it:
 
@@ -132,6 +165,10 @@ See `zfquant/derive.py` for the reasoning behind these.
 
 ```
 Zebrafish_Quant.py       thin Fiji entry point
+install.command             double-click: install/update (macOS)
+check_updates.command       double-click: check for a newer version
+export_derived_metrics.command  double-click / drag a CSV onto: run the
+                                 export below with no Terminal
 export_derived_metrics.py  CLI: size/intensity-normalized CSV (run on your
                             computer, after measuring -- see above)
 zfquant/
