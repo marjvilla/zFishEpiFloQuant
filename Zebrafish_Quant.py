@@ -2,8 +2,15 @@
 # Zebrafish_Quant.py
 # High-throughput zebrafish fluorescence quantification for Fiji / ImageJ.
 #
-# Drop this file and the zfquant/ package into Fiji's scripts folder, then run
-# it from the Script Editor (or the Plugins menu once installed).
+# Installed via install.sh (see README.md), which places ONLY this file
+# under Fiji's scripts/Plugins/ZebrafishQuant/ and puts the zfquant/ package
+# under <Fiji root>/jars/Lib/zfquant instead. That split matters: Fiji's
+# script menu recurses into every folder under scripts/Plugins and turns
+# each .py file it finds into its own clickable menu entry -- if zfquant/
+# sat next to this file, every internal module (core.py, fiji_io.py, ...)
+# would show up as a bogus, individually-clickable submenu item. jars/Lib is
+# on Jython's import path but is never scanned for menu items, so only this
+# one entry point appears in the menu.
 #
 #   Corrected Intensity = FL IntDen - (Mean BG x FL Area)
 #
@@ -34,14 +41,28 @@ from ij import IJ
 
 
 def _ensure_package_importable():
-    """Let `import zfquant` work when Fiji runs this file by path.
+    """Let `import zfquant` work regardless of exactly where this file and
+    the zfquant/ package end up.
 
-    Fiji's script runner does not always put the script's own directory on
-    sys.path, and the failure mode is a bare ImportError with no hint as to why.
+    Tries the script's own directory first (works if zfquant/ happens to sit
+    right next to this file, e.g. when just running it ad hoc from the
+    Script Editor). Then computes <Fiji root>/jars/Lib -- where install.sh
+    actually puts zfquant/ -- by walking up from this file's location to the
+    "scripts" folder and looking one level up. Fiji's script runner does not
+    reliably put either location on sys.path itself, and the failure mode is
+    a bare ImportError with no hint as to why.
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
+    candidates = [here]
+
+    parts = here.split(os.sep)
+    if "scripts" in parts:
+        fiji_root = os.sep.join(parts[:parts.index("scripts")])
+        candidates.append(os.path.join(fiji_root, "jars", "Lib"))
+
+    for path in candidates:
+        if path and path not in sys.path:
+            sys.path.insert(0, path)
 
 
 def main():

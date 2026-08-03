@@ -34,24 +34,42 @@ folder directly:
 
 ### Manual install (Windows, or if the script doesn't work for you)
 
-Symlink (not copy) `Zebrafish_Quant.py` and the `zfquant/` folder from this
-repo into `<your Fiji folder>/scripts/Plugins/ZebrafishQuant/`.
+Symlink (not copy) two things from this repo, to two DIFFERENT places --
+this split matters, see the note below:
+
+- `Zebrafish_Quant.py` into `<your Fiji folder>/scripts/Plugins/ZebrafishQuant/`
+- the `zfquant/` folder into `<your Fiji folder>/jars/Lib/`
+
+```
+<your Fiji folder>/
+  scripts/Plugins/ZebrafishQuant/Zebrafish_Quant.py  -> repo/Zebrafish_Quant.py
+  jars/Lib/zfquant                                    -> repo/zfquant
+```
 
 - **macOS/Linux**, by hand:
   ```bash
-  mkdir -p "/path/to/Fiji/scripts/Plugins/ZebrafishQuant"
+  mkdir -p "/path/to/Fiji/scripts/Plugins/ZebrafishQuant" "/path/to/Fiji/jars/Lib"
   ln -s "$(pwd)/Zebrafish_Quant.py" "/path/to/Fiji/scripts/Plugins/ZebrafishQuant/Zebrafish_Quant.py"
-  ln -s "$(pwd)/zfquant" "/path/to/Fiji/scripts/Plugins/ZebrafishQuant/zfquant"
+  ln -s "$(pwd)/zfquant" "/path/to/Fiji/jars/Lib/zfquant"
   ```
 - **Windows** (Command Prompt as Administrator, or with Developer Mode on):
   ```
   mkdir "C:\Fiji.app\scripts\Plugins\ZebrafishQuant"
+  mkdir "C:\Fiji.app\jars\Lib"
   mklink "C:\Fiji.app\scripts\Plugins\ZebrafishQuant\Zebrafish_Quant.py" "C:\path\to\repo\Zebrafish_Quant.py"
-  mklink /D "C:\Fiji.app\scripts\Plugins\ZebrafishQuant\zfquant" "C:\path\to\repo\zfquant"
+  mklink /D "C:\Fiji.app\jars\Lib\zfquant" "C:\path\to\repo\zfquant"
   ```
 
 Symlinks matter here, not copies: it's what makes updating later a single
 `git pull` with nothing else to redo.
+
+**Why two locations, not one:** Fiji's script menu recurses into every
+folder under `scripts/Plugins` and turns each `.py` file it finds into its
+own clickable menu entry. If `zfquant/` sat next to `Zebrafish_Quant.py`,
+every internal module inside it (`core.py`, `fiji_io.py`, ...) would show up
+as its own bogus menu item under a "zfquant" submenu. `jars/Lib` is on
+Jython's import path but is never scanned for menu items, so only the real
+entry point appears in the menu.
 
 ## Updating
 
