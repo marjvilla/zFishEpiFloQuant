@@ -210,6 +210,36 @@ class ReviewSession(object):
             return planes[self.bf_name]
         return planes[self.channel_names[0]]
 
+    # -- channel <-> C-index correction (LAYOUT_HYPERSTACK only) -------------
+    #
+    # startup.py's setup dialog assigns each channel a C-index purely from
+    # the order it was typed in -- a reasonable first guess, but with no way
+    # to fix it if the real hyperstack's channel order doesn't match. This
+    # lets the operator scroll the real hyperstack's C slider to the actual
+    # channel and click to correct it, same idea as Flat Stack's click-based
+    # slice order, but as an always-available correction rather than a
+    # one-time blocking step (channels are usually already right).
+
+    def current_c_index(self):
+        if self.mode != manifest_mod.LAYOUT_HYPERSTACK or self._target_imp is None:
+            return None
+        return self._target_imp.getC()
+
+    def set_channel_index(self, name, index):
+        """Correct which C-slice `name` actually is, and propagate the fix
+        to every already-generated fish's plane for that channel (skipping
+        fish where the operator deliberately omitted it), so a wrong guess
+        at setup doesn't require restarting review from scratch."""
+        if self.mode != manifest_mod.LAYOUT_HYPERSTACK or index is None:
+            return
+        self.config.channel_indices[name] = index
+        for entry in self._fish_entries:
+            if entry.position is None or entry.channels.get(name) == SKIPPED:
+                continue
+            planes = self._planes_for_position(entry.position)
+            if name in planes:
+                entry.set_channel(name, planes[name])
+
     # -- interactive stack setup (LAYOUT_FLAT_STACK only) --------------------
     #
     # Replaces the old blind "type the channel order, type the first slice"
@@ -799,6 +829,9 @@ class ReviewPanel(object):
                 mode_name, session.total_positions))
 
         self.content_panel.removeAll()
+        if session.mode == manifest_mod.LAYOUT_HYPERSTACK:
+            self.content_panel.add(self._channel_index_panel())
+            self.content_panel.add(self._spacer())
         for position in range(1, session.total_positions + 1):
             self.content_panel.add(self._position_block(position))
 
@@ -806,6 +839,35 @@ class ReviewPanel(object):
         self.content_panel.repaint()
         if self.frame is not None:
             self.frame.pack()
+
+    def _channel_index_panel(self):
+        """Hyperstack only: the channel -> C-index mapping guessed at setup,
+        correctable here by scrolling the real hyperstack's C slider to the
+        actual channel and clicking "Use current C" -- fixes every fish
+        already generated for that channel, not just future ones."""
+        session = self.session
+        panel = JPanel()
+        panel.setLayout(BoxLayout(panel, BoxLayout.Y_AXIS))
+        panel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, Color(0xd8, 0xd8, 0xd8)),
+            BorderFactory.createEmptyBorder(0, 0, 8, 0)))
+        panel.add(self._heading(
+            "Channel order (scroll the stack's C slider to the real "
+            "channel, then click to fix it):"))
+        for name in session.channel_names:
+            row = JPanel(BorderLayout(6, 0))
+            index = session.config.channel_indices.get(name)
+            row.add(self._label("%s: C%s" % (name, index), size=11),
+                   BorderLayout.CENTER)
+            button = self._button("Use current C",
+                                  self._make_set_channel_index_callback(name))
+            button.setToolTipText(
+                "Set %s to whatever C the real hyperstack is scrolled to "
+                "right now, and fix every fish already using the old value."
+                % name)
+            row.add(button, BorderLayout.EAST)
+            panel.add(row)
+        return panel
 
     def _position_block(self, position):
         """One position's worth of the all-at-once Auto review: a heading
@@ -991,6 +1053,12 @@ class ReviewPanel(object):
     def _make_view_callback(self, position):
         def callback():
             self.session.view_position(position)
+        return callback
+
+    def _make_set_channel_index_callback(self, name):
+        def callback():
+            self.session.set_channel_index(name, self.session.current_c_index())
+            self.refresh()
         return callback
 
     def _make_remove_callback(self, uid):
