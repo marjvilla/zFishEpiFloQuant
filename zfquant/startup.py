@@ -69,9 +69,16 @@ def prompt(default_output=None):
                  "this again.")
         return None
 
+    continue_setup, update_note = _maybe_offer_update()
+    if not continue_setup:
+        return None   # Just pulled the latest version -- see the message
+                       # already shown; restart Fiji to actually run it.
+
     config = Config()
 
     dialog = GenericDialog("Zebrafish Quant - Setup")
+    if update_note:
+        dialog.addMessage(update_note)
     dialog.addMessage("%d image(s) open." % len(images))
     dialog.addStringField("Session name:", "Experiment", 22)
     dialog.addStringField("Operator (recorded in the CSV):", "", 22)
@@ -186,6 +193,52 @@ def _open_images():
         return []
     return [WindowManager.getImage(i) for i in ids
             if WindowManager.getImage(i) is not None]
+
+
+def _maybe_offer_update():
+    """Checks GitHub and, if a git checkout is behind, offers to pull right
+    here instead of just noting it. Never allowed to hold up or break setup
+    -- a slow or unreachable network should feel like nothing happened, not
+    an error.
+
+    Returns (continue_setup, note): `continue_setup` is False only once an
+    update was actually pulled -- the running Fiji still has the OLD code
+    loaded in memory, so continuing into setup would measure with it while
+    claiming to be current; the caller aborts and the operator restarts
+    Fiji instead. `note` is a message worth adding to the setup dialog --
+    only used for a zip download, where there's nothing to pull
+    automatically and a passive reminder is all there is to offer.
+    """
+    try:
+        from zfquant import update_check
+        message = update_check.check_for_update()
+        if not message:
+            return True, None
+
+        root = update_check.repo_root()
+        if not update_check.can_auto_update(root):
+            return True, message
+
+        choice = _three_way(
+            "A newer version of Zebrafish Quant is available.\n\n"
+            "Update now? You'll need to quit and reopen Fiji afterward to "
+            "use it.", "Update available", ["Update now", "Not now"])
+        if choice != 0:
+            return True, None
+
+        ok, output = update_check.pull_latest(root)
+        if ok:
+            IJ.showMessage("Zebrafish Quant - Updated",
+                           "Updated. Quit and reopen Fiji to use the new "
+                           "version.")
+            return False, None
+        IJ.showMessage("Zebrafish Quant - Update failed",
+                       "Could not update automatically; see the Log for "
+                       "details.")
+        IJ.log("Zebrafish Quant update failed:\n" + output)
+        return True, None
+    except Exception:
+        return True, None
 
 
 def _infer_brightfield(names):

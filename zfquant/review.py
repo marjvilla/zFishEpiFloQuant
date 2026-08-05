@@ -651,11 +651,31 @@ class ReviewPanel(object):
         self.frame = frame
         self.refresh()
 
-    def _label(self, text, bold=False, size=12):
-        label = JLabel(text)
+    def _label(self, text, bold=False, size=12, wrap=True):
+        """HTML-wrapped by default so long text (a heading, a fish's full
+        channel summary, ...) wraps within the panel instead of running off
+        the frame's fixed width. `wrap=False` is only for the handful of
+        labels that sit in a tight row next to a button (BorderLayout.EAST)
+        where a forced wrap width could squeeze that button out of view --
+        those are always short, bounded strings, safe to leave unwrapped."""
+        content = self._wrap_html(text) if wrap else str(text)
+        label = JLabel(content)
         style = Font.BOLD if bold else Font.PLAIN
         label.setFont(Font("SansSerif", style, size))
         return label
+
+    def _wrap_html(self, text):
+        safe = (str(text).replace("&", "&amp;").replace("<", "&lt;")
+               .replace(">", "&gt;"))
+        return "<html><body style='width:%dpx'>%s</body></html>" % (
+            PANEL_WIDTH - 20, safe)
+
+    def _set_text(self, label, text):
+        """setText() on an already-built label bypasses _label()'s wrapping
+        (Swing only treats a string as HTML if it starts with "<html>") --
+        route every later text update through here instead, or a long value
+        like an image title silently stops wrapping the moment it changes."""
+        label.setText(self._wrap_html(text))
 
     def _spacer(self):
         panel = JPanel()
@@ -766,7 +786,7 @@ class ReviewPanel(object):
         one blind. There is no position sequence to walk yet, so nav is just
         Cancel; Done stays disabled."""
         session = self.session
-        self.position_label.setText("Auto Single Stack -- set up the stack")
+        self._set_text(self.position_label, "Auto Single Stack -- set up the stack")
         self._set_nav(False)
         self.done_button.setEnabled(False)
 
@@ -824,9 +844,9 @@ class ReviewPanel(object):
         session = self.session
         mode_name = ("Auto Hyperstack" if session.mode
                     == manifest_mod.LAYOUT_HYPERSTACK else "Auto Single Stack")
-        self.position_label.setText(
-            "%s -- %d position(s), all shown below" % (
-                mode_name, session.total_positions))
+        self._set_text(self.position_label,
+                      "%s -- %d position(s), all shown below" % (
+                          mode_name, session.total_positions))
 
         self.content_panel.removeAll()
         if session.mode == manifest_mod.LAYOUT_HYPERSTACK:
@@ -857,7 +877,7 @@ class ReviewPanel(object):
         for name in session.channel_names:
             row = JPanel(BorderLayout(6, 0))
             index = session.config.channel_indices.get(name)
-            row.add(self._label("%s: C%s" % (name, index), size=11),
+            row.add(self._label("%s: C%s" % (name, index), size=11, wrap=False),
                    BorderLayout.CENTER)
             button = self._button("Use current C",
                                   self._make_set_channel_index_callback(name))
@@ -884,7 +904,8 @@ class ReviewPanel(object):
         skipped = position in session._skipped_positions
         header = JPanel(BorderLayout(6, 0))
         title = "Position %d%s" % (position, "  (skipped)" if skipped else "")
-        header.add(self._label(title, bold=True, size=11), BorderLayout.CENTER)
+        header.add(self._label(title, bold=True, size=11, wrap=False),
+                  BorderLayout.CENTER)
         view = self._button("View", self._make_view_callback(position))
         view.setToolTipText("Jump the real stack to this position and label "
                             "it, to double-check it visually.")
@@ -909,10 +930,10 @@ class ReviewPanel(object):
         session = self.session
         imp = session.current_window()
         title = imp.getTitle() if imp is not None else "(no images open)"
-        self.position_label.setText(
-            "Manual -- window %d of %d: %s"
-            % (session.current_position_index + 1, len(session._images),
-              title))
+        self._set_text(self.position_label,
+                      "Manual -- window %d of %d: %s"
+                      % (session.current_position_index + 1,
+                         len(session._images), title))
 
         self.content_panel.removeAll()
         self.content_panel.add(self._heading(
@@ -949,10 +970,13 @@ class ReviewPanel(object):
         outer.setLayout(BoxLayout(outer, BoxLayout.Y_AXIS))
         outer.setBorder(BorderFactory.createEmptyBorder(2, 0, 6, 0))
 
-        top = JPanel(BorderLayout(6, 0))
+        # Title on its own line, wrapped -- a multi-channel summary can run
+        # long, and squeezing it into a BorderLayout.CENTER next to the
+        # button row below would force a choice between clipping the text
+        # or pushing the buttons out of view. Stacked, neither happens.
         number = session.display_number(entry)
         text = "Fish %d: %s" % (number, entry.summary(session.channel_names))
-        top.add(self._label(text, size=11), BorderLayout.CENTER)
+        outer.add(self._label(text, size=11))
 
         buttons = JPanel(GridLayout(1, 0, 2, 0))
         up = self._button("Move Up", self._make_move_callback(entry.uid, -1))
@@ -965,8 +989,7 @@ class ReviewPanel(object):
         buttons.add(up)
         buttons.add(down)
         buttons.add(remove)
-        top.add(buttons, BorderLayout.EAST)
-        outer.add(top)
+        outer.add(buttons)
 
         # Per-channel omit/include toggles -- a fish genuinely may not have
         # every configured channel. Brightfield is never offered here: the

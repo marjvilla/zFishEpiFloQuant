@@ -89,10 +89,13 @@ entry point appears in the menu.
 
 ## Updating
 
-**Double-click `check_updates.command`** any time to see if a newer version
-is out. If you have a git checkout, **double-click `install.command`** again
-to pull and reinstall it in one click. If you're on a zip download instead,
-it'll tell you to grab a fresh zip (zips don't self-update).
+The plugin checks for you: its setup screen (the first thing you see when
+you run it from the Plugins menu) shows a note if a newer version is on
+GitHub, no separate step needed. You can also check any time without
+opening Fiji -- **double-click `check_updates.command`**. Either way, if
+you have a git checkout, **double-click `install.command`** to pull and
+reinstall in one click. If you're on a zip download instead, it'll tell
+you to grab a fresh zip (zips don't self-update).
 
 From Terminal, if you have a git checkout:
 
@@ -130,17 +133,19 @@ Output goes to `<output folder>/<session name>/`: a CSV, an ROI archive, and
 per-channel audit images, all written incrementally as you go (not batched to
 the end), so a crash mid-session loses at most the one fish in progress.
 
-## Size + intensity metrics (after measuring)
+## Size + intensity metrics
 
-A standalone side tool, separate from the Fiji plugin -- it never runs
-inside Fiji, only afterward, on your computer, against the CSV the plugin
-already wrote. The dataset CSV has raw stats per channel, but comparing fish
-of different sizes needs those normalized. Once a session's CSV is done,
-either:
+The dataset CSV has raw stats per channel, but comparing fish of different
+sizes needs those normalized. Three ways to get it, all producing the exact
+same two files:
 
+- **From inside Fiji** -- click **"Export summary CSVs"** in the control
+  panel, any time during or after a session. This is the easiest way; no
+  separate tool, no Terminal.
 - **Drag `..._dataset.csv` onto `export_derived_metrics.command`** in
-  Finder (or double-click it and paste the path when asked), or
-- from Terminal:
+  Finder (or double-click it and paste the path when asked) -- for a CSV
+  from an older session, or a computer without Fiji.
+- From Terminal:
   ```bash
   python3 export_derived_metrics.py "<output folder>/<session name>/<session name>_dataset.csv"
   ```
@@ -175,12 +180,15 @@ zfquant/
   core.py             measurement + threshold math      (pure, unit-tested)
   manifest.py         fish -> plane mapping + overrides  (pure, unit-tested)
   journal.py          append-only session state          (pure, unit-tested)
-  derive.py           post-hoc size/intensity metrics    (pure, unit-tested)
+  derive.py           size/intensity metrics -- used by both the plugin's
+                      "Export summary CSVs" button and the CLI below
+                      (pure, unit-tested, Jython/CPython compatible)
   fiji_io.py           every ImageJ/Java call lives here
   workflow.py          the per-fish state machine
   review.py             the interactive setup-time review panel
   ui.py                 the measurement-time control panel
   startup.py            setup dialogs (before review)
+  update_check.py       GitHub update check shown on the setup screen
 tests/                pytest/unittest suite for the pure modules above
 legacy/               the original single-file script this replaced, kept
                        for reference

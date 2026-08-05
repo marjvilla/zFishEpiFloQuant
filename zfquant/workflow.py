@@ -20,6 +20,7 @@ import threading
 import traceback
 
 from zfquant import core
+from zfquant import derive
 from zfquant import fiji_io
 from zfquant import journal as journal_mod
 from zfquant import manifest as manifest_mod
@@ -866,6 +867,27 @@ class Controller(object):
         self.status("Session complete: %d fish saved. CSV: %s"
                     % (self.s.committed_count(), self.s.paths.csv))
         self.refresh()
+
+    def export_summary_csvs(self):
+        """The size/intensity-normalized CSVs (see zfquant/derive.py), from
+        inside Fiji -- reads whatever the CSV currently holds, so this works
+        mid-session too, not just after Finish. Safe to run more than once;
+        it just overwrites the two files next to the dataset CSV."""
+        if not os.path.exists(self.s.paths.csv):
+            self.status("No rows saved yet -- nothing to summarize.")
+            return
+        try:
+            derived_path, channels = derive.export_derived_csv(self.s.paths.csv)
+            summary_path, _ = derive.export_summary_csv(self.s.paths.csv)
+        except Exception:
+            self.status("Summary export failed; see the Log.")
+            fiji_io.log(traceback.format_exc())
+            return
+        if not channels:
+            self.status("No fluorescence channels found in the CSV -- "
+                        "nothing to summarize.")
+            return
+        self.status("Wrote %s and %s." % (derived_path, summary_path))
 
     def shutdown(self):
         """Called when the panel closes, so a working image never lingers."""

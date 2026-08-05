@@ -1,8 +1,10 @@
 """Post-hoc derived metrics: size + amount of fluorescence, normalized.
 
-Python 3 only -- this runs separately from Fiji, on the tool's own output
-CSV (``<output>/<session>/<session>_dataset.csv``), after measurement is
-done. Not imported by anything Jython-side.
+Jython 2.7 and CPython 3 compatible -- unlike the earlier version of this
+module, it now runs both as the standalone CLI (export_derived_metrics.py,
+on your computer, after measurement) AND from inside Fiji itself (the
+"Export summary CSVs" button, see ui.py), on the tool's own output CSV
+(``<output>/<session>/<session>_dataset.csv``). No ``ij.*`` imports.
 
 Fluorescence area alone doesn't say much across fish of different sizes,
 and integrated density alone conflates "brighter" with "bigger fish" --
@@ -26,9 +28,17 @@ Two exports: export_derived_csv (every raw + normalized column, for
 checking the normalization itself) and export_summary_csv (just FishID and
 the three normalized metrics per channel, meant to be pasted straight into
 a t-test / stats tool without stripping columns first).
+
+CSV reading/writing is hand-rolled rather than the stdlib csv module, for
+the same reason journal.py's _csv_line/_csv_field are -- csv wants binary
+mode under Jython 2.7 and text mode under CPython 3, and this module has to
+behave identically in both. Rounding is hand-rolled too (see _round) since
+Python 2's round() rounds half away from zero and Python 3's rounds half to
+even -- pinning the rule here keeps a summary CSV built inside Fiji
+byte-identical to one built by the standalone CLI on the same data.
 """
 
-import csv
+import math
 import os
 
 
@@ -46,7 +56,7 @@ def fluorescence_channel_names(header):
 def _to_float(value):
     if value is None:
         return None
-    text = str(value).strip()
+    text = value.strip() if isinstance(value, str) else str(value).strip()
     if text == "" or text == "SKIPPED":
         return None
     try:
@@ -55,10 +65,29 @@ def _to_float(value):
         return None
 
 
+def _round(value, digits):
+    """Round half away from zero, identically under Jython 2.7 and CPython
+    3. See core._round -- the same trap, fixed the same way, kept as a
+    separate copy so this module has no dependency on core.py."""
+    try:
+        if math.isnan(value):
+            return None
+        if math.isinf(value):
+            return value
+        factor = 10.0 ** digits
+        scaled = value * factor
+        if scaled >= 0:
+            return math.floor(scaled + 0.5) / factor
+        return math.ceil(scaled - 0.5) / factor
+    except (TypeError, ValueError, OverflowError):
+        return value
+
+
 def _fmt(value, round_to):
     if value is None:
         return ""
-    return round(value, round_to)
+    rounded = _round(value, round_to)
+    return "" if rounded is None else rounded
 
 
 def derived_header(channel_names):
@@ -71,9 +100,9 @@ def derived_header(channel_names):
 
 
 def derive_row(row, channel_names, round_to=4):
-    """One derived-metrics row for one fish's source CSV row (a dict, e.g.
-    from csv.DictReader). Blank wherever the source is missing or the
-    channel was deliberately omitted (SKIPPED) for this fish."""
+    """One derived-metrics row for one fish's source CSV row (a dict of
+    column name -> string value). Blank wherever the source is missing or
+    the channel was deliberately omitted (SKIPPED) for this fish."""
     eye_area = _to_float(row.get("EyeArea"))
     out = {"FileName": row.get("FileName", ""), "FishID": row.get("FishID", "")}
     for name in channel_names:
@@ -114,12 +143,101 @@ def summary_row(row, channel_names, round_to=4):
     return out
 
 
+# ---------------------------------------------------------------------------
+#  CSV I/O -- hand-rolled, see the module docstring for why
+# ---------------------------------------------------------------------------
+
+def _csv_field(value):
+    """Minimal RFC 4180 quoting -- matches journal.py's _csv_field."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    if any(ch in text for ch in (',', '"', '\n', '\r')):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
+def _csv_line(values):
+    return ",".join(_csv_field(v) for v in values) + "\r\n"
+
+
+def _parse_csv(text):
+    """Minimal RFC 4180 parser matching _csv_field's quoting exactly, so
+    this module never depends on the stdlib csv module's differing binary-
+    vs-text-mode behavior between Jython 2.7 and CPython 3."""
+    rows = []
+    row = []
+    field_chars = []
+    in_quotes = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_quotes:
+            if ch == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    field_chars.append('"')
+                    i += 2
+                    continue
+                in_quotes = False
+                i += 1
+                continue
+            field_chars.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_quotes = True
+            i += 1
+            continue
+        if ch == ',':
+            row.append("".join(field_chars))
+            field_chars = []
+            i += 1
+            continue
+        if ch == '\r':
+            i += 1
+            continue
+        if ch == '\n':
+            row.append("".join(field_chars))
+            field_chars = []
+            rows.append(row)
+            row = []
+            i += 1
+            continue
+        field_chars.append(ch)
+        i += 1
+    if field_chars or row:
+        row.append("".join(field_chars))
+        rows.append(row)
+    return rows
+
+
 def _read_dataset_csv(input_path):
-    with open(input_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        header = reader.fieldnames or []
-        rows = list(reader)
+    handle = open(input_path, "rb")
+    try:
+        raw = handle.read()
+    finally:
+        handle.close()
+    text = raw.decode("utf-8")
+    parsed = _parse_csv(text)
+    if not parsed:
+        return [], []
+    header = parsed[0]
+    rows = [dict(zip(header, values)) for values in parsed[1:]]
     return header, rows
+
+
+def _write_csv(output_path, header, rows):
+    lines = [_csv_line(header)]
+    for row in rows:
+        lines.append(_csv_line([row.get(column, "") for column in header]))
+    payload = "".join(lines).encode("utf-8", "replace")
+
+    handle = open(output_path, "wb")
+    try:
+        handle.write(payload)
+    finally:
+        handle.close()
 
 
 def _default_output_path(input_path, suffix):
@@ -141,11 +259,7 @@ def export_derived_csv(input_path, output_path=None, round_to=4):
     if output_path is None:
         output_path = _default_output_path(input_path, "_derived")
 
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=out_header, lineterminator="\r\n")
-        writer.writeheader()
-        writer.writerows(derived_rows)
-
+    _write_csv(output_path, out_header, derived_rows)
     return output_path, channel_names
 
 
@@ -161,9 +275,5 @@ def export_summary_csv(input_path, output_path=None, round_to=4):
     if output_path is None:
         output_path = _default_output_path(input_path, "_summary")
 
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=out_header, lineterminator="\r\n")
-        writer.writeheader()
-        writer.writerows(summary_rows)
-
+    _write_csv(output_path, out_header, summary_rows)
     return output_path, channel_names

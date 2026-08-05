@@ -22,7 +22,8 @@ from java.awt import (BorderLayout, Color, Dimension, Font, GridLayout,
                       KeyEventDispatcher, KeyboardFocusManager)
 from java.awt.event import ActionListener, KeyEvent, WindowAdapter
 from javax.swing import (BorderFactory, BoxLayout, JButton, JFrame, JLabel,
-                         JOptionPane, JPanel, SwingUtilities, UIManager)
+                         JOptionPane, JPanel, JScrollPane, SwingUtilities,
+                         UIManager)
 from javax.swing.border import EmptyBorder
 from javax.swing.text import JTextComponent
 
@@ -146,14 +147,25 @@ class ControlPanel(object):
         self.warning_label.setForeground(Color(0xB0, 0x60, 0x00))
 
         self.status_label = self._label("Ready.")
-        self.status_label.setPreferredSize(Dimension(PANEL_WIDTH, 48))
         self.status_label.setVerticalAlignment(JLabel.TOP)
 
         for component in (self.mode_label, self.fish_label, self.plane_label,
                           self.progress_label, self.warning_label):
             root.add(component)
         root.add(self._spacer())
-        root.add(self.status_label)
+        # A JScrollPane, not a fixed-height label directly: some status text
+        # (a long file path, a multi-clause message) needs more than a
+        # couple of lines to wrap at this panel's width. A hard
+        # setPreferredSize on the label itself would silently clip whatever
+        # didn't fit; scrolling keeps every message fully reachable while
+        # the panel's own footprint still never changes size (see the
+        # module docstring on why layout jitter is deliberately avoided
+        # here).
+        status_scroll = JScrollPane(self.status_label)
+        status_scroll.setPreferredSize(Dimension(PANEL_WIDTH, 60))
+        status_scroll.setBorder(BorderFactory.createEmptyBorder())
+        status_scroll.getVerticalScrollBar().setUnitIncrement(16)
+        root.add(status_scroll)
         root.add(self._spacer())
 
         root.add(self._heading("Channels"))
@@ -183,6 +195,11 @@ class ControlPanel(object):
         root.add(self._button_grid([
             ("Add another fish", self.controller.add_fish),
             ("Finish session", self._confirm_finish),
+        ]))
+
+        root.add(self._spacer())
+        root.add(self._button_grid([
+            ("Export summary CSVs", self.controller.export_summary_csvs),
         ]))
 
         frame.getContentPane().add(root, BorderLayout.CENTER)
@@ -348,10 +365,21 @@ class ControlPanel(object):
             controller.status("Nothing to undo.")
             return
         label = last.get("row", {}).get("FishID", "the last fish")
-        if self._ask("Withdraw %s?\n\nIts row leaves the CSV and its ROIs leave "
-                     "the archive. The journal keeps a record either way."
-                     % label, "Undo"):
-            controller.undo()
+
+        # Backspace reaches this via the GLOBAL key dispatcher (see
+        # _GlobalKeyDispatcher), not a button click -- showing a modal
+        # JOptionPane synchronously from inside that dispatch, before the
+        # triggering key event has finished unwinding, is exactly the
+        # nested-modal-loop situation prompt_target_reached's _later() call
+        # exists to avoid. Without it the confirmation could fail to
+        # actually block, which is how a fish ends up silently withdrawn
+        # with no dialog ever appearing.
+        def ask():
+            if self._ask("Withdraw %s?\n\nIts row leaves the CSV and its ROIs "
+                         "leave the archive. The journal keeps a record "
+                         "either way." % label, "Undo"):
+                controller.undo()
+        self._later(ask)
 
     def _confirm_finish(self):
         if self._ask("Finish this session?\n\n%d fish saved."
