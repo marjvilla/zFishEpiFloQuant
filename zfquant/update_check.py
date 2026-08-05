@@ -18,13 +18,38 @@ REPO_URL = "https://github.com/" + REPO
 _TIMEOUT_MS = 2500
 
 
-def _repo_root():
+def repo_root():
     """This file lives at <repo>/zfquant/update_check.py -- but install.sh
     symlinks the whole zfquant/ folder into <Fiji>/jars/Lib/, so when this
     runs for real __file__ is reached through that symlink. realpath (not
     abspath, which leaves symlinks alone) is what actually lands back on
     the real repo checkout, where .git/VERSION live."""
     return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def can_auto_update(root):
+    """True only for a git checkout -- a zip download has nothing to pull
+    into, and needs a fresh zip instead (see check_updates.command)."""
+    return os.path.isdir(os.path.join(root, ".git"))
+
+
+def pull_latest(root):
+    """Runs `git pull --ff-only` in `root`. Returns (ok, output_text).
+
+    --ff-only refuses rather than merges/rebases if the checkout has local
+    commits origin/main doesn't -- exactly the case where an automatic pull
+    would be the wrong call; the operator sees the real git output either
+    way and can sort it out from Terminal if needed.
+    """
+    try:
+        process = subprocess.Popen(
+            ["git", "pull", "--ff-only"], cwd=root,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out, _ = process.communicate()
+        text = out.decode("utf-8") if isinstance(out, bytes) else out
+        return process.returncode == 0, text.strip()
+    except Exception as error:
+        return False, str(error)
 
 
 def _local_sha(root):
@@ -78,7 +103,7 @@ def check_for_update():
     there's nothing worth saying (up to date, or the check couldn't
     complete at all)."""
     try:
-        local = _local_sha(_repo_root())
+        local = _local_sha(repo_root())
         remote = _remote_sha()
     except Exception:
         return None
