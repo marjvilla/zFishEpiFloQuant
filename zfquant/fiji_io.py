@@ -578,7 +578,19 @@ def duplicate_plane(imp, plane, title):
     stack -- the legacy exporter duplicated the ENTIRE stack (all channels, all
     Z, all T) just to flatten one plane, which on a large hyperstack was
     gigabytes of copying per fish and a realistic OutOfMemoryError.
+
+    `imp` is the SOURCE (often the operator's own live stack, not a working
+    copy) and Duplicator crops to whatever ROI is currently active on it --
+    silently, with no error -- rather than duplicating the whole plane. A
+    selection can be left there by perfectly ordinary use (the operator
+    clicking around the real stack, use_current_plane's redirect, a box
+    still active when undo tears down the working copy mid-draw, ...); with
+    no guard, the very next working copy opened from this source is cropped
+    down to that leftover selection instead of showing the whole plane.
+    Clearing it here, once, is what makes duplication always return the
+    whole plane regardless of how a selection got left behind upstream.
     """
+    imp.deleteRoi()
     if plane.slice_index is not None:
         single = Duplicator().run(imp, plane.slice_index, plane.slice_index)
     else:

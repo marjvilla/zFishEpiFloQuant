@@ -185,6 +185,11 @@ class ControlPanel(object):
             ("Finish session", self._confirm_finish),
         ]))
 
+        root.add(self._spacer())
+        root.add(self._button_grid([
+            ("Export summary CSVs", self.controller.export_summary_csvs),
+        ]))
+
         frame.getContentPane().add(root, BorderLayout.CENTER)
         self._bind_keys()
 
@@ -348,10 +353,21 @@ class ControlPanel(object):
             controller.status("Nothing to undo.")
             return
         label = last.get("row", {}).get("FishID", "the last fish")
-        if self._ask("Withdraw %s?\n\nIts row leaves the CSV and its ROIs leave "
-                     "the archive. The journal keeps a record either way."
-                     % label, "Undo"):
-            controller.undo()
+
+        # Backspace reaches this via the GLOBAL key dispatcher (see
+        # _GlobalKeyDispatcher), not a button click -- showing a modal
+        # JOptionPane synchronously from inside that dispatch, before the
+        # triggering key event has finished unwinding, is exactly the
+        # nested-modal-loop situation prompt_target_reached's _later() call
+        # exists to avoid. Without it the confirmation could fail to
+        # actually block, which is how a fish ends up silently withdrawn
+        # with no dialog ever appearing.
+        def ask():
+            if self._ask("Withdraw %s?\n\nIts row leaves the CSV and its ROIs "
+                         "leave the archive. The journal keeps a record "
+                         "either way." % label, "Undo"):
+                controller.undo()
+        self._later(ask)
 
     def _confirm_finish(self):
         if self._ask("Finish this session?\n\n%d fish saved."
