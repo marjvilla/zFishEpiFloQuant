@@ -15,6 +15,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from zfquant import derive   # noqa: E402
 
 
+class TestCsvRoundTrip(unittest.TestCase):
+    """The hand-rolled parser/writer (see the module docstring for why it's
+    not the stdlib csv module) needs to agree with itself and with RFC 4180
+    quoting for the field set this tool actually writes."""
+
+    def test_quoted_field_with_embedded_comma(self):
+        parsed = derive._parse_csv('a,"b, c",d\r\n1,2,3\r\n')
+        self.assertEqual(parsed, [["a", "b, c", "d"], ["1", "2", "3"]])
+
+    def test_quoted_field_with_embedded_quote(self):
+        parsed = derive._parse_csv('a\r\n"say ""hi"""\r\n')
+        self.assertEqual(parsed, [["a"], ['say "hi"']])
+
+    def test_write_then_parse_round_trips(self):
+        line = derive._csv_line(["plain", "with,comma", 'with"quote', ""])
+        parsed = derive._parse_csv(line)
+        self.assertEqual(parsed, [["plain", "with,comma", 'with"quote', ""]])
+
+    def test_no_trailing_newline_still_parses_last_row(self):
+        parsed = derive._parse_csv("a,b\r\n1,2")
+        self.assertEqual(parsed, [["a", "b"], ["1", "2"]])
+
+
 class TestFluorescenceChannelNames(unittest.TestCase):
 
     def test_detects_channels_from_area_columns(self):
