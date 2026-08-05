@@ -89,10 +89,13 @@ entry point appears in the menu.
 
 ## Updating
 
-**Double-click `check_updates.command`** any time to see if a newer version
-is out. If you have a git checkout, **double-click `install.command`** again
-to pull and reinstall it in one click. If you're on a zip download instead,
-it'll tell you to grab a fresh zip (zips don't self-update).
+The plugin checks for you: its setup screen (the first thing you see when
+you run it from the Plugins menu) shows a note if a newer version is on
+GitHub, no separate step needed. You can also check any time without
+opening Fiji -- **double-click `check_updates.command`**. Either way, if
+you have a git checkout, **double-click `install.command`** to pull and
+reinstall in one click. If you're on a zip download instead, it'll tell
+you to grab a fresh zip (zips don't self-update).
 
 From Terminal, if you have a git checkout:
 
@@ -185,6 +188,7 @@ zfquant/
   review.py             the interactive setup-time review panel
   ui.py                 the measurement-time control panel
   startup.py            setup dialogs (before review)
+  update_check.py       GitHub update check shown on the setup screen
 tests/                pytest/unittest suite for the pure modules above
 legacy/               the original single-file script this replaced, kept
                        for reference

@@ -72,6 +72,9 @@ def prompt(default_output=None):
     config = Config()
 
     dialog = GenericDialog("Zebrafish Quant - Setup")
+    update_message = _check_for_update()
+    if update_message:
+        dialog.addMessage(update_message)
     dialog.addMessage("%d image(s) open." % len(images))
     dialog.addStringField("Session name:", "Experiment", 22)
     dialog.addStringField("Operator (recorded in the CSV):", "", 22)
@@ -186,6 +189,17 @@ def _open_images():
         return []
     return [WindowManager.getImage(i) for i in ids
             if WindowManager.getImage(i) is not None]
+
+
+def _check_for_update():
+    """A one-line note for the setup dialog if a newer version is on
+    GitHub, or None. Never allowed to hold up or break setup -- a slow or
+    unreachable network should feel like nothing happened, not an error."""
+    try:
+        from zfquant import update_check
+        return update_check.check_for_update()
+    except Exception:
+        return None
 
 
 def _infer_brightfield(names):
