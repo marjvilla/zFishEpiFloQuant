@@ -1044,25 +1044,29 @@ class ReviewPanel(object):
                 toggles.add(button)
             outer.add(toggles)
 
-        # One-click swap per fluorescent-channel pair -- the fix for "GFP
-        # and RFP are actually flipped for just this fish", right here
-        # instead of after measuring. One button per pair rather than a
-        # pick-one-then-pick-another flow: with the usual 2 fluorescent
-        # channels that's a single click, not two.
-        fl_names = [n for n in session.channel_names if n != session.bf_name]
-        pairs = [(a, b) for i, a in enumerate(fl_names)
-                for b in fl_names[i + 1:]]
-        if pairs:
-            swaps = JPanel(GridLayout(1, 0, 2, 0))
-            for a, b in pairs:
-                button = self._button(
-                    "Swap %s/%s" % (a, b), self._make_swap_callback(
-                        entry.uid, a, b))
-                button.setToolTipText(
-                    "%s and %s are flipped for this fish -- swap which "
-                    "plane each one points to." % (a, b))
-                swaps.add(button)
-            outer.add(swaps)
+        # One dropdown per channel that actually has a plane right now --
+        # BF included, since its plane can be mislabeled too, same as any
+        # fluorescent channel. Each dropdown lists every such channel;
+        # picking a different one swaps this channel's plane with
+        # whichever channel currently holds it. N dropdowns instead of
+        # N-choose-2 buttons is what stays easy as channel count grows,
+        # and it reaches any arrangement, not just one pair at a time --
+        # swap BF/RFP, then RFP/GFP, and all three have rotated.
+        available = [n for n in session.channel_names
+                    if isinstance(entry.channels.get(n), manifest_mod.Plane)]
+        if len(available) > 1:
+            outer.add(self._label(
+                "Actual position of each channel (swaps with whichever "
+                "one currently has it):", size=10))
+            positions = JPanel(GridLayout(0, 2, 4, 2))
+            for name in available:
+                positions.add(self._label(name, size=11, wrap=False))
+                combo = JComboBox(available)
+                combo.setSelectedItem(name)
+                combo.addActionListener(_Click(
+                    self._make_position_callback(entry.uid, name, combo)))
+                positions.add(combo)
+            outer.add(positions)
         return outer
 
     def _manual_channel_row(self):
@@ -1162,9 +1166,11 @@ class ReviewPanel(object):
             self.refresh()
         return callback
 
-    def _make_swap_callback(self, uid, name_a, name_b):
+    def _make_position_callback(self, uid, name, combo):
         def callback():
-            self.session.swap_channels(uid, name_a, name_b)
+            selected = combo.getSelectedItem()
+            if selected != name:
+                self.session.swap_channels(uid, name, selected)
             self.refresh()
         return callback
 
