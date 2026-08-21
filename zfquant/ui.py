@@ -123,6 +123,14 @@ class ControlPanel(object):
         self._channel_rows = {}      # name -> (button, state JLabel)
         self._channel_order = []     # to detect when a rebuild is really needed
         self._key_dispatcher = None
+
+        self.swap_panel = None
+        self._swap_buttons = {}      # name -> button
+        self._swap_order = []
+        self._swap_pending = None    # first channel clicked, waiting for a
+                                     # second to complete the swap
+        self._last_fish_ordinal = None
+
         self._build()
 
     # -- construction -----------------------------------------------------
@@ -190,6 +198,12 @@ class ControlPanel(object):
             ("Measure the plane I am on  (P)", self.controller.use_current_plane),
             ("Apply that fix to later fish", self.controller.promote_override),
         ]))
+
+        root.add(self._spacer())
+        root.add(self._heading("Swap channels for this fish"))
+        self.swap_panel = JPanel(GridLayout(0, 1, 4, 4))
+        root.add(self.swap_panel)
+        self._rebuild_swap_buttons()
 
         root.add(self._spacer())
         root.add(self._button_grid([
@@ -273,6 +287,54 @@ class ControlPanel(object):
             self.controller.arm(name)
         return callback
 
+    # -- channel swap -------------------------------------------------------
+    #
+    # Controller.relabel() (swap which plane two channels point to, for the
+    # current fish -- the fix for "GFP and RFP are flipped for this one")
+    # already existed but had no button anywhere to reach it from. Click one
+    # channel, then another, to swap them; click the same one again to back
+    # out. Brightfield is excluded -- swapping it against a fluorescence
+    # channel is never a real correction, the two need different ROI shapes.
+
+    def _rebuild_swap_buttons(self):
+        session = self.controller.s
+        self.swap_panel.removeAll()
+        self._swap_buttons = {}
+
+        for name in session.fl_names:
+            button = self._button(name, self._make_swap_callback(name))
+            self.swap_panel.add(button)
+            self._swap_buttons[name] = button
+
+        self._swap_order = list(session.fl_names)
+        self._swap_pending = None
+
+    def _make_swap_callback(self, name):
+        def callback():
+            if self._swap_pending is None:
+                self._swap_pending = name
+                self.controller.status(
+                    "Swap %s with which channel? Click another, or click "
+                    "%s again to cancel." % (name, name))
+                self._update_swap_highlight()
+                return
+            if self._swap_pending == name:
+                self._swap_pending = None
+                self.controller.status("Swap cancelled.")
+                self._update_swap_highlight()
+                return
+            pending = self._swap_pending
+            self._swap_pending = None
+            self._update_swap_highlight()
+            self.controller.relabel(pending, name)
+        return callback
+
+    def _update_swap_highlight(self):
+        for name, button in self._swap_buttons.items():
+            selected = (name == self._swap_pending)
+            button.setText(("> %s (click the other channel)" % name)
+                           if selected else name)
+
     # -- key bindings -----------------------------------------------------
 
     def _bind_keys(self):
@@ -316,6 +378,18 @@ class ControlPanel(object):
         if self._channel_order != list(session.channel_names):
             self._rebuild_channel_rows()
             self.channel_panel.revalidate()
+
+        if self._swap_order != list(session.fl_names):
+            self._rebuild_swap_buttons()
+            self.swap_panel.revalidate()
+
+        if self._last_fish_ordinal != session.fish_ordinal:
+            # A pending swap-selection from the PREVIOUS fish must not
+            # silently apply to a new one just because its channel names
+            # happen to match.
+            self._swap_pending = None
+            self._update_swap_highlight()
+            self._last_fish_ordinal = session.fish_ordinal
 
         mode = "Session: %s" % session.paths.session_name
         if session.finished:
