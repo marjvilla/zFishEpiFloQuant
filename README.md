@@ -126,6 +126,8 @@ Setup walks you through:
    - **Manual** -- you tell it what each open image is
 2. An interactive review where you step through the real data (not blind
    text fields) confirming or correcting the plan before anything is measured.
+   If a fish's channels are mapped to the wrong planes, expand **"Channels +"**
+   on that fish's row and set each one's real C (or slot) directly.
 3. Then the normal per-fish workflow: arm a channel, draw a background box,
    draw a signal box, accept, repeat, save the fish. If a channel turns out
    to be mislabeled for one fish (e.g. GFP and RFP are actually swapped),
@@ -169,6 +171,13 @@ Writes two files next to it:
 
 See `zfquant/derive.py` for the reasoning behind these.
 
+## Analyzing the output
+
+[`ANALYSIS.md`](ANALYSIS.md) documents every column the tool writes, what the
+session folder contains, and a QC-and-analysis recipe. Written to be handed
+straight to someone -- or an AI agent -- who has the CSVs but wasn't there for
+the imaging.
+
 ## Repo layout
 
 ```
@@ -192,6 +201,7 @@ zfquant/
   ui.py                 the measurement-time control panel
   startup.py            setup dialogs (before review)
   update_check.py       GitHub update check shown on the setup screen
+ANALYSIS.md           column-by-column data guide for whoever analyzes the CSVs
 tests/                pytest/unittest suite for the pure modules above
 legacy/               the original single-file script this replaced, kept
                        for reference
