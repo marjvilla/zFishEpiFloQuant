@@ -39,6 +39,11 @@ RESUME_RESUME = "resume"
 RESUME_NEW = "new"
 RESUME_CANCEL = "cancel"
 
+# Returned by prompt() instead of None specifically when an update was just
+# pulled, so the caller can log something other than "cancelled" -- nothing
+# was cancelled, the operator needs to restart Fiji to run the new code.
+UPDATED = "updated"
+
 
 class Config(object):
 
@@ -62,7 +67,8 @@ class Config(object):
 
 
 def prompt(default_output=None):
-    """Run the setup flow. Returns a Config, or None if cancelled."""
+    """Run the setup flow. Returns a Config, UPDATED (an update was just
+    pulled -- restart Fiji), or None if cancelled."""
     images = _open_images()
     if not images:
         IJ.error("No images are open.\n\nOpen your stacks in Fiji, then run "
@@ -71,8 +77,8 @@ def prompt(default_output=None):
 
     continue_setup, update_note = _maybe_offer_update()
     if not continue_setup:
-        return None   # Just pulled the latest version -- see the message
-                       # already shown; restart Fiji to actually run it.
+        return UPDATED   # Just pulled the latest version -- see the message
+                         # already shown; restart Fiji to actually run it.
 
     config = Config()
 
