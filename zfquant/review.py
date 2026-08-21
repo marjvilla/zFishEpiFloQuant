@@ -444,6 +444,24 @@ class ReviewSession(object):
         else:
             entry.channels[channel_name] = SKIPPED
 
+    def swap_channels(self, uid, name_a, name_b):
+        """Swap which plane `name_a` and `name_b` point to, for one fish --
+        the fix for a mislabeled pair (GFP and RFP actually flipped for just
+        this fish), corrected right here during review instead of after
+        measuring. Both must be real (not None/SKIPPED) or there is nothing
+        to swap; SKIPPED specifically is left alone rather than swapped in,
+        since that is a deliberate omission, not a wrong plane."""
+        entry = self._entry_by_uid(uid)
+        if entry is None:
+            return
+        first = entry.channels.get(name_a)
+        second = entry.channels.get(name_b)
+        if not isinstance(first, manifest_mod.Plane) or \
+                not isinstance(second, manifest_mod.Plane):
+            return
+        entry.channels[name_a] = second
+        entry.channels[name_b] = first
+
     def entries_at_current_position(self):
         if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
             return list(self._fish_entries)
@@ -1025,6 +1043,26 @@ class ReviewPanel(object):
                     "include it again" % name)
                 toggles.add(button)
             outer.add(toggles)
+
+        # One-click swap per fluorescent-channel pair -- the fix for "GFP
+        # and RFP are actually flipped for just this fish", right here
+        # instead of after measuring. One button per pair rather than a
+        # pick-one-then-pick-another flow: with the usual 2 fluorescent
+        # channels that's a single click, not two.
+        fl_names = [n for n in session.channel_names if n != session.bf_name]
+        pairs = [(a, b) for i, a in enumerate(fl_names)
+                for b in fl_names[i + 1:]]
+        if pairs:
+            swaps = JPanel(GridLayout(1, 0, 2, 0))
+            for a, b in pairs:
+                button = self._button(
+                    "Swap %s/%s" % (a, b), self._make_swap_callback(
+                        entry.uid, a, b))
+                button.setToolTipText(
+                    "%s and %s are flipped for this fish -- swap which "
+                    "plane each one points to." % (a, b))
+                swaps.add(button)
+            outer.add(swaps)
         return outer
 
     def _manual_channel_row(self):
@@ -1121,6 +1159,12 @@ class ReviewPanel(object):
     def _make_toggle_callback(self, uid, channel_name):
         def callback():
             self.session.toggle_channel_skip(uid, channel_name)
+            self.refresh()
+        return callback
+
+    def _make_swap_callback(self, uid, name_a, name_b):
+        def callback():
+            self.session.swap_channels(uid, name_a, name_b)
             self.refresh()
         return callback
 
