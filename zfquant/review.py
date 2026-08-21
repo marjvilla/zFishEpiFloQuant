@@ -38,8 +38,9 @@ import traceback
 
 from java.awt import BorderLayout, Color, Dimension, Font, GridLayout
 from java.awt.event import WindowAdapter
-from javax.swing import (BorderFactory, BoxLayout, JButton, JFrame, JLabel,
-                         JOptionPane, JPanel, JScrollPane, SwingUtilities)
+from javax.swing import (BorderFactory, BoxLayout, JButton, JComboBox,
+                         JFrame, JLabel, JOptionPane, JPanel, JScrollPane,
+                         SwingUtilities)
 from javax.swing.border import EmptyBorder
 
 from zfquant import fiji_io
@@ -224,6 +225,11 @@ class ReviewSession(object):
         if self.mode != manifest_mod.LAYOUT_HYPERSTACK or self._target_imp is None:
             return None
         return self._target_imp.getC()
+
+    def channel_count(self):
+        if self.mode != manifest_mod.LAYOUT_HYPERSTACK or self._target_imp is None:
+            return 0
+        return self._target_imp.getNChannels()
 
     def set_channel_index(self, name, index):
         """Correct which C-slice `name` actually is, and propagate the fix
@@ -861,9 +867,10 @@ class ReviewPanel(object):
             self.frame.pack()
 
     def _channel_index_panel(self):
-        """Hyperstack only: the channel -> C-index mapping guessed at setup,
-        correctable here by scrolling the real hyperstack's C slider to the
-        actual channel and clicking "Use current C" -- fixes every fish
+        """Hyperstack only: the channel -> C-index mapping guessed at setup.
+        Pick it directly from the dropdown if you already know it, or
+        scroll the stack's C slider to the real channel and click "Use
+        current C" to confirm by looking -- either way fixes every fish
         already generated for that channel, not just future ones."""
         session = self.session
         panel = JPanel()
@@ -872,13 +879,22 @@ class ReviewPanel(object):
             BorderFactory.createMatteBorder(0, 0, 1, 0, Color(0xd8, 0xd8, 0xd8)),
             BorderFactory.createEmptyBorder(0, 0, 8, 0)))
         panel.add(self._heading(
-            "Channel order (scroll the stack's C slider to the real "
-            "channel, then click to fix it):"))
+            "Channel order -- pick each channel's real C index directly, "
+            "or scroll the stack to it and click \"Use current C\" to "
+            "confirm by looking:"))
+        count = max(session.channel_count(), 1)
         for name in session.channel_names:
             row = JPanel(BorderLayout(6, 0))
+            row.add(self._label(name, size=11, wrap=False), BorderLayout.WEST)
+
+            combo = JComboBox(["C%d" % i for i in range(1, count + 1)])
             index = session.config.channel_indices.get(name)
-            row.add(self._label("%s: C%s" % (name, index), size=11, wrap=False),
-                   BorderLayout.CENTER)
+            if index and 1 <= index <= count:
+                combo.setSelectedIndex(index - 1)
+            combo.addActionListener(
+                _Click(self._make_combo_index_callback(name, combo)))
+            row.add(combo, BorderLayout.CENTER)
+
             button = self._button("Use current C",
                                   self._make_set_channel_index_callback(name))
             button.setToolTipText(
@@ -1081,6 +1097,12 @@ class ReviewPanel(object):
     def _make_set_channel_index_callback(self, name):
         def callback():
             self.session.set_channel_index(name, self.session.current_c_index())
+            self.refresh()
+        return callback
+
+    def _make_combo_index_callback(self, name, combo):
+        def callback():
+            self.session.set_channel_index(name, combo.getSelectedIndex() + 1)
             self.refresh()
         return callback
 
