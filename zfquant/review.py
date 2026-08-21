@@ -444,23 +444,79 @@ class ReviewSession(object):
         else:
             entry.channels[channel_name] = SKIPPED
 
-    def swap_channels(self, uid, name_a, name_b):
-        """Swap which plane `name_a` and `name_b` point to, for one fish --
-        the fix for a mislabeled pair (GFP and RFP actually flipped for just
-        this fish), corrected right here during review instead of after
-        measuring. Both must be real (not None/SKIPPED) or there is nothing
-        to swap; SKIPPED specifically is left alone rather than swapped in,
-        since that is a deliberate omission, not a wrong plane."""
+    def plane_slots(self, entry):
+        """The [(label, plane)] this fish's channels can be pointed at --
+        "C1"/"C2"/"C3" for a hyperstack, "#1"/"#2"/"#3" for the slots of a
+        flat stack's block.
+
+        Built from the POSITION's planes, not from what the entry currently
+        holds, so every slot stays offered no matter how the channels are
+        currently arranged (otherwise pointing two channels at one slot
+        would make a slot vanish and become unreachable). Manual mode has
+        no position template, so it falls back to whatever planes the fish
+        already references.
+        """
+        planes = {}
+        if entry.position is not None:
+            planes = self._planes_for_position(entry.position)
+        if not planes:
+            planes = dict((n, p) for n, p in entry.channels.items()
+                         if isinstance(p, manifest_mod.Plane))
+
+        unique = []
+        for plane in planes.values():
+            if plane not in unique:
+                unique.append(plane)
+
+        if self.mode == manifest_mod.LAYOUT_HYPERSTACK:
+            unique.sort(key=lambda p: p.channel or 0)
+            return [("C%d" % (p.channel or 0), p) for p in unique]
+        unique.sort(key=lambda p: (p.slice_index if p.slice_index is not None
+                                   else 0))
+        return [("#%d" % (i + 1), p) for i, p in enumerate(unique)]
+
+    def slot_label_for(self, entry, channel_name):
+        """Which slot label this channel currently points at, or None."""
+        plane = entry.channels.get(channel_name)
+        if not isinstance(plane, manifest_mod.Plane):
+            return None
+        for label, candidate in self.plane_slots(entry):
+            if candidate == plane:
+                return label
+        return None
+
+    def set_channel_slot(self, uid, channel_name, label):
+        """Point `channel_name` directly at the slot named `label`, for one
+        fish. Direct assignment rather than a swap: picking "C2" means this
+        channel is C2, full stop, which is what the label on screen says --
+        a swap would silently move some OTHER channel too, which is exactly
+        what made the previous pairwise version confusing to use."""
         entry = self._entry_by_uid(uid)
         if entry is None:
             return
-        first = entry.channels.get(name_a)
-        second = entry.channels.get(name_b)
-        if not isinstance(first, manifest_mod.Plane) or \
-                not isinstance(second, manifest_mod.Plane):
-            return
-        entry.channels[name_a] = second
-        entry.channels[name_b] = first
+        for candidate, plane in self.plane_slots(entry):
+            if candidate == label:
+                entry.channels[channel_name] = plane
+                return
+
+    def duplicate_slot_channels(self, entry):
+        """Channel names sharing a plane with another channel on this fish.
+
+        Direct assignment can point two channels at one slot -- legitimate
+        to pass through mid-edit (fixing a swap one dropdown at a time goes
+        through exactly that state), so it is surfaced as a warning rather
+        than prevented.
+        """
+        counts = {}
+        for name in self.channel_names:
+            plane = entry.channels.get(name)
+            if isinstance(plane, manifest_mod.Plane):
+                counts.setdefault(plane.describe(), []).append(name)
+        clashing = []
+        for names in counts.values():
+            if len(names) > 1:
+                clashing.extend(names)
+        return [n for n in self.channel_names if n in clashing]
 
     def entries_at_current_position(self):
         if self.mode == manifest_mod.LAYOUT_PER_WINDOW:
@@ -600,6 +656,10 @@ class ReviewPanel(object):
         self.next_button = None
         self.cancel_button = None
         self.nav_panel = None
+        # uids whose per-channel slot pickers are showing. Collapsed by
+        # default: most fish need no correction, and a picker per channel
+        # per fish would otherwise dominate the screen.
+        self._expanded_uids = set()
         self._pending_channel = None   # Manual mode: channel picked, waiting
                                        # for a fish click to complete the
                                        # assignment -- see _manual_channel_row
@@ -1023,6 +1083,19 @@ class ReviewPanel(object):
         buttons.add(up)
         buttons.add(down)
         buttons.add(remove)
+
+        # Collapsed by default and sharing the existing button row, so the
+        # common case (channels already correct, which is most fish) costs
+        # no extra vertical space at all -- it only expands for the fish
+        # actually being corrected.
+        expanded = entry.uid in self._expanded_uids
+        if len(session.plane_slots(entry)) > 1:
+            channels = self._button(
+                "Channels -" if expanded else "Channels +",
+                self._make_expand_callback(entry.uid))
+            channels.setToolTipText(
+                "Set which C/slot each channel of this fish really is.")
+            buttons.add(channels)
         outer.add(buttons)
 
         # Per-channel omit/include toggles -- a fish genuinely may not have
@@ -1044,29 +1117,36 @@ class ReviewPanel(object):
                 toggles.add(button)
             outer.add(toggles)
 
-        # One dropdown per channel that actually has a plane right now --
-        # BF included, since its plane can be mislabeled too, same as any
-        # fluorescent channel. Each dropdown lists every such channel;
-        # picking a different one swaps this channel's plane with
-        # whichever channel currently holds it. N dropdowns instead of
-        # N-choose-2 buttons is what stays easy as channel count grows,
-        # and it reaches any arrangement, not just one pair at a time --
-        # swap BF/RFP, then RFP/GFP, and all three have rotated.
-        available = [n for n in session.channel_names
-                    if isinstance(entry.channels.get(n), manifest_mod.Plane)]
-        if len(available) > 1:
-            outer.add(self._label(
-                "Actual position of each channel (swaps with whichever "
-                "one currently has it):", size=10))
-            positions = JPanel(GridLayout(0, 2, 4, 2))
-            for name in available:
-                positions.add(self._label(name, size=11, wrap=False))
-                combo = JComboBox(available)
-                combo.setSelectedItem(name)
+        # One small dropdown per channel, showing the C (or slot) it really
+        # is -- picked directly, and it STAYS on what was picked, which the
+        # previous swap-based version could not do: it always reset itself
+        # to the channel's own name on every rebuild, so a correction that
+        # had in fact been applied still looked like nothing happened.
+        if expanded:
+            slots = session.plane_slots(entry)
+            labels = [label for label, _ in slots]
+            grid = JPanel(GridLayout(0, 4, 4, 2))
+            for name in session.channel_names:
+                current = session.slot_label_for(entry, name)
+                if current is None:
+                    continue   # omitted or unassigned: nothing to point
+                grid.add(self._label(name, size=11, wrap=False))
+                combo = JComboBox(labels)
+                combo.setSelectedItem(current)
+                # Listener added AFTER setSelectedItem, or seeding the
+                # current value would fire it and re-enter refresh.
                 combo.addActionListener(_Click(
-                    self._make_position_callback(entry.uid, name, combo)))
-                positions.add(combo)
-            outer.add(positions)
+                    self._make_slot_callback(entry.uid, name, combo)))
+                grid.add(combo)
+            outer.add(grid)
+
+            clashing = session.duplicate_slot_channels(entry)
+            if clashing:
+                warning = self._label(
+                    "Both %s point at the same plane." % " and ".join(clashing),
+                    size=10)
+                warning.setForeground(Color(0xB0, 0x60, 0x00))
+                outer.add(warning)
         return outer
 
     def _manual_channel_row(self):
@@ -1166,11 +1246,28 @@ class ReviewPanel(object):
             self.refresh()
         return callback
 
-    def _make_position_callback(self, uid, name, combo):
+    def _make_expand_callback(self, uid):
+        def callback():
+            if uid in self._expanded_uids:
+                self._expanded_uids.discard(uid)
+            else:
+                self._expanded_uids.add(uid)
+            self.refresh()
+        return callback
+
+    def _make_slot_callback(self, uid, name, combo):
         def callback():
             selected = combo.getSelectedItem()
-            if selected != name:
-                self.session.swap_channels(uid, name, selected)
+            if selected is None:
+                return
+            session = self.session
+            entry = session._entry_by_uid(uid)
+            # No-op when the selection already matches -- Swing fires this
+            # on rebuilds too, and refreshing from inside that would loop.
+            if entry is not None and \
+                    session.slot_label_for(entry, name) == selected:
+                return
+            session.set_channel_slot(uid, name, selected)
             self.refresh()
         return callback
 
