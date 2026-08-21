@@ -127,7 +127,10 @@ Setup walks you through:
 2. An interactive review where you step through the real data (not blind
    text fields) confirming or correcting the plan before anything is measured.
 3. Then the normal per-fish workflow: arm a channel, draw a background box,
-   draw a signal box, accept, repeat, save the fish.
+   draw a signal box, accept, repeat, save the fish. If a channel turns out
+   to be mislabeled for one fish (e.g. GFP and RFP are actually swapped),
+   click its name and then the other under "Swap channels for this fish" --
+   works in any mode, including Auto.
 
 Output goes to `<output folder>/<session name>/`: a CSV, an ROI archive, and
 per-channel audit images, all written incrementally as you go (not batched to
