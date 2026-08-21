@@ -72,6 +72,10 @@ def main():
     from zfquant import review, startup, ui, workflow
 
     config = startup.prompt()
+    if config is startup.UPDATED:
+        IJ.log("[ZFQuant] Updated to the latest version -- quit and reopen "
+              "Fiji, then run it again.")
+        return
     if config is None:
         IJ.log("[ZFQuant] Setup cancelled.")
         return

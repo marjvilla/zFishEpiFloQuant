@@ -34,20 +34,39 @@ def can_auto_update(root):
 
 
 def pull_latest(root):
-    """Runs `git pull --ff-only` in `root`. Returns (ok, output_text).
+    """Fetches, switches to main if not already on it, and fast-forwards
+    to origin/main. Returns (ok, output_text).
 
-    --ff-only refuses rather than merges/rebases if the checkout has local
-    commits origin/main doesn't -- exactly the case where an automatic pull
-    would be the wrong call; the operator sees the real git output either
-    way and can sort it out from Terminal if needed.
+    Explicit about targeting main specifically, rather than "whatever
+    branch happens to be checked out" (a plain `git pull` would use) --
+    this tool's whole distribution model assumes a single branch, so if the
+    checkout was ever left on something else, switching back to main IS
+    the correct fix here, not an error to surface. A bare `git pull` on a
+    non-main branch would otherwise report success while leaving HEAD
+    exactly where check_for_update() will keep calling it out of date,
+    forever.
+
+    --ff-only refuses rather than merges/rebases if main has local commits
+    origin/main doesn't -- exactly the case where an automatic pull would
+    be the wrong call; the operator sees the real git output either way.
     """
+    commands = [
+        ["git", "fetch", "origin", "main"],
+        ["git", "checkout", "main"],
+        ["git", "merge", "--ff-only", "origin/main"],
+    ]
+    output = []
     try:
-        process = subprocess.Popen(
-            ["git", "pull", "--ff-only"], cwd=root,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        out, _ = process.communicate()
-        text = out.decode("utf-8") if isinstance(out, bytes) else out
-        return process.returncode == 0, text.strip()
+        for command in commands:
+            process = subprocess.Popen(
+                command, cwd=root,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            out, _ = process.communicate()
+            text = out.decode("utf-8") if isinstance(out, bytes) else out
+            output.append(text.strip())
+            if process.returncode != 0:
+                return False, "\n".join(output)
+        return True, "\n".join(output)
     except Exception as error:
         return False, str(error)
 
